@@ -7,6 +7,31 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
 -- ==============================================================================
+-- CLEAN UP PREVIOUS / CONFLICTING TABLES
+-- ==============================================================================
+-- Ensures all 19 MedConnect AI tables are created fresh with all required columns
+DROP TABLE IF EXISTS public.audit_logs CASCADE;
+DROP TABLE IF EXISTS public.access_grants CASCADE;
+DROP TABLE IF EXISTS public.messages CASCADE;
+DROP TABLE IF EXISTS public.symptom_logs CASCADE;
+DROP TABLE IF EXISTS public.health_vitals CASCADE;
+DROP TABLE IF EXISTS public.lab_orders CASCADE;
+DROP TABLE IF EXISTS public.prescriptions CASCADE;
+DROP TABLE IF EXISTS public.consultations CASCADE;
+DROP TABLE IF EXISTS public.appointments CASCADE;
+DROP TABLE IF EXISTS public.institution_staff CASCADE;
+DROP TABLE IF EXISTS public.institution_details CASCADE;
+DROP TABLE IF EXISTS public.doctor_schedule CASCADE;
+DROP TABLE IF EXISTS public.doctor_details CASCADE;
+DROP TABLE IF EXISTS public.vaccinations CASCADE;
+DROP TABLE IF EXISTS public.allergies CASCADE;
+DROP TABLE IF EXISTS public.medical_history CASCADE;
+DROP TABLE IF EXISTS public.patient_lifestyle CASCADE;
+DROP TABLE IF EXISTS public.patient_details CASCADE;
+DROP TABLE IF EXISTS public.bmi_records CASCADE;
+DROP TABLE IF EXISTS public.profiles CASCADE;
+
+-- ==============================================================================
 -- SEQUENCES FOR UNIQUE IDENTIFIERS
 -- ==============================================================================
 CREATE SEQUENCE IF NOT EXISTS patient_seq START WITH 1 INCREMENT BY 1;
