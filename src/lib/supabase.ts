@@ -67,10 +67,10 @@ export async function signUp({
     throw error;
   }
 
-  // If user is created, also insert or upsert profile in profiles table if it exists
+  // If user is created, sync extra metadata to profile if needed
   if (data.user) {
     try {
-      await supabase.from('profiles').upsert({
+      const { error: upsertErr } = await supabase.from('profiles').upsert({
         id: data.user.id,
         role,
         full_name: fullName,
@@ -79,8 +79,11 @@ export async function signUp({
         metadata: roleSpecificData,
         updated_at: new Date().toISOString(),
       });
-    } catch {
-      // Don't fail the signup if the profiles table schema is managed by a database trigger or slightly different
+      if (upsertErr) {
+        console.warn('Client profile upsert note (managed by trigger):', upsertErr.message);
+      }
+    } catch (err) {
+      console.warn('Client profile sync skipped:', err);
     }
   }
 

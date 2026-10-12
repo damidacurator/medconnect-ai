@@ -75,6 +75,7 @@ CREATE TABLE IF NOT EXISTS public.profiles (
     phone TEXT,
     avatar_url TEXT,
     unique_code TEXT UNIQUE,
+    metadata JSONB DEFAULT '{}'::jsonb,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -538,61 +539,80 @@ BEGIN
     user_name := COALESCE(NEW.raw_user_meta_data->>'full_name', split_part(NEW.email, '@', 1));
     user_phone := NEW.raw_user_meta_data->>'phone';
 
-    -- Generate appropriate unique code based on role
-    IF user_role = 'doctor' THEN
-        generated_code := generate_unique_code('DOC', 'doctor_seq');
-    ELSIF user_role = 'institution' THEN
-        generated_code := generate_unique_code('INS', 'institution_seq');
-    ELSE
-        generated_code := generate_unique_code('PID', 'patient_seq');
-    END IF;
+    -- Generate appropriate unique code based on role (fallback safely if sequence not ready)
+    BEGIN
+        IF user_role = 'doctor' THEN
+            generated_code := generate_unique_code('DOC', 'doctor_seq');
+        ELSIF user_role = 'institution' THEN
+            generated_code := generate_unique_code('INS', 'institution_seq');
+        ELSE
+            generated_code := generate_unique_code('PID', 'patient_seq');
+        END IF;
+    EXCEPTION WHEN OTHERS THEN
+        generated_code := 'MC-' || UPPER(substr(md5(random()::text), 1, 8));
+    END;
 
-    -- Insert profile
-    INSERT INTO public.profiles (
-        id,
-        email,
-        full_name,
-        role,
-        phone,
-        avatar_url,
-        unique_code,
-        created_at,
-        updated_at
-    ) VALUES (
-        NEW.id,
-        NEW.email,
-        user_name,
-        user_role,
-        user_phone,
-        NEW.raw_user_meta_data->>'avatar_url',
-        generated_code,
-        now(),
-        now()
-    )
-    ON CONFLICT (id) DO NOTHING;
+    -- Insert or update profile
+    BEGIN
+        INSERT INTO public.profiles (
+            id,
+            email,
+            full_name,
+            role,
+            phone,
+            avatar_url,
+            unique_code,
+            metadata,
+            created_at,
+            updated_at
+        ) VALUES (
+            NEW.id,
+            NEW.email,
+            user_name,
+            user_role,
+            user_phone,
+            NEW.raw_user_meta_data->>'avatar_url',
+            generated_code,
+            COALESCE(NEW.raw_user_meta_data, '{}'::jsonb),
+            now(),
+            now()
+        )
+        ON CONFLICT (id) DO UPDATE SET
+            full_name = EXCLUDED.full_name,
+            role = EXCLUDED.role,
+            phone = COALESCE(EXCLUDED.phone, profiles.phone),
+            metadata = EXCLUDED.metadata,
+            updated_at = now();
+    EXCEPTION WHEN OTHERS THEN
+        -- Prevent blocking auth signup
+    END;
 
     -- Auto-initialize sub-detail records
-    IF user_role = 'patient' THEN
-        INSERT INTO public.patient_details (patient_id)
-        VALUES (NEW.id)
-        ON CONFLICT (patient_id) DO NOTHING;
+    BEGIN
+        IF user_role = 'patient' THEN
+            INSERT INTO public.patient_details (patient_id)
+            VALUES (NEW.id)
+            ON CONFLICT (patient_id) DO NOTHING;
 
-        INSERT INTO public.patient_lifestyle (patient_id)
-        VALUES (NEW.id)
-        ON CONFLICT (patient_id) DO NOTHING;
-    ELSIF user_role = 'doctor' THEN
-        INSERT INTO public.doctor_details (doctor_id)
-        VALUES (NEW.id)
-        ON CONFLICT (doctor_id) DO NOTHING;
-    ELSIF user_role = 'institution' THEN
-        INSERT INTO public.institution_details (institution_id)
-        VALUES (NEW.id)
-        ON CONFLICT (institution_id) DO NOTHING;
-    END IF;
+            INSERT INTO public.patient_lifestyle (patient_id)
+            VALUES (NEW.id)
+            ON CONFLICT (patient_id) DO NOTHING;
+        ELSIF user_role = 'doctor' THEN
+            INSERT INTO public.doctor_details (doctor_id)
+            VALUES (NEW.id)
+            ON CONFLICT (doctor_id) DO NOTHING;
+        ELSIF user_role = 'institution' THEN
+            INSERT INTO public.institution_details (institution_id)
+            VALUES (NEW.id)
+            ON CONFLICT (institution_id) DO NOTHING;
+        END IF;
+    EXCEPTION WHEN OTHERS THEN
+        -- Prevent blocking auth signup
+    END;
 
     RETURN NEW;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
 
 DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
 CREATE TRIGGER on_auth_user_created
@@ -657,6 +677,12 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER STABLE;
 
+-- Helper to safely get caller role without RLS recursion
+CREATE OR REPLACE FUNCTION public.get_my_role()
+RETURNS TEXT AS $$
+    SELECT role FROM public.profiles WHERE id = auth.uid();
+$$ LANGUAGE sql SECURITY DEFINER STABLE SET search_path = public;
+
 -- ==============================================================================
 -- ROW LEVEL SECURITY (RLS) POLICIES
 -- ==============================================================================
@@ -684,15 +710,18 @@ ALTER TABLE public.audit_logs ENABLE ROW LEVEL SECURITY;
 
 -- 1. Profiles Policies
 DROP POLICY IF EXISTS "Profiles read policy" ON public.profiles;
+DROP POLICY IF EXISTS "Doctors read all profiles" ON public.profiles;
+DROP POLICY IF EXISTS "Users own their profile" ON public.profiles;
 CREATE POLICY "Profiles read policy" ON public.profiles
-    FOR SELECT USING (
-        auth.uid() = id OR
-        EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role IN ('doctor', 'institution'))
-    );
+    FOR SELECT TO authenticated USING (true);
+
+DROP POLICY IF EXISTS "Profiles insert own policy" ON public.profiles;
+CREATE POLICY "Profiles insert own policy" ON public.profiles
+    FOR INSERT TO authenticated WITH CHECK (auth.uid() = id);
 
 DROP POLICY IF EXISTS "Profiles update own policy" ON public.profiles;
 CREATE POLICY "Profiles update own policy" ON public.profiles
-    FOR UPDATE USING (auth.uid() = id);
+    FOR UPDATE TO authenticated USING (auth.uid() = id);
 
 -- 2. Patient Details Policies
 DROP POLICY IF EXISTS "Patient details read policy" ON public.patient_details;
@@ -725,14 +754,14 @@ DROP POLICY IF EXISTS "Medical history insert policy" ON public.medical_history;
 CREATE POLICY "Medical history insert policy" ON public.medical_history
     FOR INSERT WITH CHECK (
         auth.uid() = patient_id OR
-        EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'doctor')
+        public.get_my_role() = 'doctor'
     );
 
 DROP POLICY IF EXISTS "Medical history update policy" ON public.medical_history;
 CREATE POLICY "Medical history update policy" ON public.medical_history
     FOR UPDATE USING (
         auth.uid() = patient_id OR
-        EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'doctor')
+        public.get_my_role() = 'doctor'
     );
 
 -- 5. Allergies Policies
@@ -744,14 +773,14 @@ DROP POLICY IF EXISTS "Allergies insert policy" ON public.allergies;
 CREATE POLICY "Allergies insert policy" ON public.allergies
     FOR INSERT WITH CHECK (
         auth.uid() = patient_id OR
-        EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'doctor')
+        public.get_my_role() = 'doctor'
     );
 
 DROP POLICY IF EXISTS "Allergies update policy" ON public.allergies;
 CREATE POLICY "Allergies update policy" ON public.allergies
     FOR UPDATE USING (
         auth.uid() = patient_id OR
-        EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'doctor')
+        public.get_my_role() = 'doctor'
     );
 
 -- 6. Vaccinations Policies
@@ -763,7 +792,7 @@ DROP POLICY IF EXISTS "Vaccinations write policy" ON public.vaccinations;
 CREATE POLICY "Vaccinations write policy" ON public.vaccinations
     FOR ALL USING (
         auth.uid() = patient_id OR
-        EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role IN ('doctor', 'institution'))
+        public.get_my_role() IN ('doctor', 'institution')
     );
 
 -- 7. Doctor Details Policies
