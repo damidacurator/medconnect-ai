@@ -315,7 +315,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                       autoComplete="name"
                       value={fullName}
                       onChange={(e) => setFullName(e.target.value)}
-                      placeholder={role === 'doctor' ? 'Dr. Sarah Jenkins' : role === 'institution' ? 'Administrator Name' : 'Your full name'}
+                      placeholder={role === 'doctor' ? 'Dr. Full Name' : role === 'institution' ? 'Administrator Name' : 'Your full name'}
                       className="w-full bg-slate-800/60 border border-white/10 rounded-xl pl-10 pr-4 py-2.5 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500/30 transition-colors"
                     />
                   </div>

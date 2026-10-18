@@ -151,11 +151,7 @@ const INITIAL_CONSULTATIONS: ConsultationRecord[] = [];
 
 export function DoctorDashboard() {
   const auth = useAuth?.() || {};
-  const user = auth.user || {
-    id: 'doc-user-1',
-    email: 'dr.michael.chen@medconnect.ai',
-    user_metadata: { full_name: 'Dr. Michael Chen, MD', specialization: 'Internal Medicine & Cardiology' }
-  };
+  const user = auth.user || null;
 
   // State
   const [activeTab, setActiveTab] = useState<string>('overview');
@@ -175,15 +171,15 @@ export function DoctorDashboard() {
 
   // Profile data
   const [doctorProfile, setDoctorProfile] = useState({
-    code: auth.profile?.unique_code || (user ? `DOC-${user.id.replace(/-/g, '').slice(0, 9).toUpperCase()}` : 'DOC-000001'),
-    name: auth.profile?.full_name || (user?.user_metadata?.full_name as string) || 'Dr. ' + (user?.email?.split('@')[0] || 'Clinician'),
-    title: 'Consultant Physician',
-    specialization: ((auth.profile?.metadata as any)?.specialization as string) || 'General Practice',
+    code: auth.profile?.unique_code || (user?.id ? `DOC-${user.id.replace(/-/g, '').slice(0, 9).toUpperCase()}` : 'DOC-PENDING'),
+    name: auth.profile?.full_name || (user?.user_metadata?.full_name as string) || (user?.email ? 'Dr. ' + user.email.split('@')[0] : 'Dr. Attending'),
+    title: 'Physician',
+    specialization: ((auth.profile?.metadata as any)?.specialization as string) || 'General Medicine',
     license: ((auth.profile?.metadata as any)?.council_reg as string) || 'Pending Verification',
     hospital: ((auth.profile?.metadata as any)?.current_institution as string) || 'MedConnect Healthcare Network',
     phone: auth.profile?.phone || '',
     email: user?.email || '',
-    bio: 'Licensed clinician providing universal telehealth and clinical care on MedConnect AI.'
+    bio: 'Licensed clinician providing telehealth and clinical consultations on MedConnect AI.'
   });
 
   // Schedule settings
@@ -2281,7 +2277,7 @@ function AiWorkspaceSection({
             <div className="flex items-start gap-2">
               <span className="text-teal-400 font-bold">•</span>
               <span>
-                <strong>Vital Trajectory:</strong> Recent BP trends at {patient.vitalsHistory[0]?.bp || '120/80'} mmHg.
+                <strong>Vital Trajectory:</strong> Recent BP trends at {patient.vitalsHistory[0]?.bp || '--/--'} mmHg.
                 Target range stability maintained under current regimen.
               </span>
             </div>

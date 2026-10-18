@@ -218,7 +218,7 @@ export function PatientDashboard() {
     fullName: '',
     age: '',
     gender: 'prefer_not_to_say',
-    bloodGroup: 'O+',
+    bloodGroup: '',
     phone: '',
     emergencyContact: '',
   });
@@ -238,7 +238,7 @@ export function PatientDashboard() {
     if (user?.id) {
       return `PID-${user.id.replace(/-/g, '').slice(0, 9).toUpperCase()}`;
     }
-    return 'PID-MC9842104';
+    return 'PID-PENDING';
   }, [profile, user]);
 
   const showToast = (title: string, desc?: string, type: 'success' | 'info' | 'error' = 'success') => {
@@ -386,7 +386,7 @@ export function PatientDashboard() {
                   <input
                     type="text"
                     required
-                    placeholder="e.g. Sarah Jenkins"
+                    placeholder="Enter your full legal name"
                     value={onboardingData.fullName}
                     onChange={e => setOnboardingData({ ...onboardingData, fullName: e.target.value })}
                     className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700 focus:border-teal-400 focus:ring-1 focus:ring-teal-400 text-sm text-slate-100 outline-none transition"
@@ -398,7 +398,7 @@ export function PatientDashboard() {
                     <label className="block text-xs font-medium text-slate-300 mb-1.5">Age</label>
                     <input
                       type="number"
-                      placeholder="e.g. 32"
+                      placeholder="Age (years)"
                       value={onboardingData.age}
                       onChange={e => setOnboardingData({ ...onboardingData, age: e.target.value })}
                       className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700 focus:border-teal-400 focus:ring-1 focus:ring-teal-400 text-sm text-slate-100 outline-none transition"
@@ -427,6 +427,7 @@ export function PatientDashboard() {
                       onChange={e => setOnboardingData({ ...onboardingData, bloodGroup: e.target.value })}
                       className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700 focus:border-teal-400 text-sm text-slate-100 outline-none transition"
                     >
+                      <option value="">Select (Optional)</option>
                       {['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'].map(b => (
                         <option key={b} value={b}>{b}</option>
                       ))}
@@ -448,7 +449,7 @@ export function PatientDashboard() {
                   <label className="block text-xs font-medium text-slate-300 mb-1.5">Emergency Contact (Name & Phone)</label>
                   <input
                     type="text"
-                    placeholder="e.g. John Jenkins (+1 555-0199)"
+                    placeholder="Name and phone number"
                     value={onboardingData.emergencyContact}
                     onChange={e => setOnboardingData({ ...onboardingData, emergencyContact: e.target.value })}
                     className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700 focus:border-teal-400 text-sm text-slate-100 outline-none transition"
@@ -527,7 +528,7 @@ export function PatientDashboard() {
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
               Verified Patient
             </span>
-            <span>Blood: {profile?.metadata && (profile.metadata as any).blood_group ? (profile.metadata as any).blood_group : 'O+'}</span>
+            <span>Blood: {profile?.metadata && (profile.metadata as any).blood_group ? (profile.metadata as any).blood_group : '--'}</span>
           </div>
         </div>
 
@@ -634,8 +635,6 @@ export function PatientDashboard() {
                 className="p-2 rounded-xl bg-slate-800/60 hover:bg-slate-800 text-slate-300 hover:text-white border border-slate-700/60 relative transition"
               >
                 <Bell className="w-4 h-4" />
-                <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-cyan-400 animate-ping" />
-                <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-cyan-400" />
               </button>
 
               <AnimatePresence>
@@ -648,26 +647,16 @@ export function PatientDashboard() {
                   >
                     <div className="flex items-center justify-between pb-3 border-b border-slate-800">
                       <span className="text-sm font-semibold text-white">Notifications</span>
-                      <span className="text-[11px] text-teal-400 bg-teal-500/10 px-2 py-0.5 rounded-full font-medium">
-                        3 New
+                      <span className="text-[11px] text-slate-400 bg-slate-800 px-2 py-0.5 rounded-full font-medium">
+                        0 New
                       </span>
                     </div>
-                    <div className="divide-y divide-slate-800/60 max-h-72 overflow-y-auto">
-                      <div className="py-2.5 text-xs">
-                        <p className="font-semibold text-slate-200">Upcoming Video Visit</p>
-                        <p className="text-slate-400 mt-0.5">Appointment with Dr. Sarah Chen tomorrow at 10:00 AM.</p>
-                        <span className="text-[10px] text-teal-400 mt-1 inline-block">10 mins ago</span>
-                      </div>
-                      <div className="py-2.5 text-xs">
-                        <p className="font-semibold text-slate-200">Lab Results Ready</p>
-                        <p className="text-slate-400 mt-0.5">Comprehensive Metabolic Panel results uploaded by St. Jude Labs.</p>
-                        <span className="text-[10px] text-slate-500 mt-1 inline-block">2 hours ago</span>
-                      </div>
-                      <div className="py-2.5 text-xs">
-                        <p className="font-semibold text-slate-200">AI Health Summary Generated</p>
-                        <p className="text-slate-400 mt-0.5">Weekly vitals consistency check completed. Score: 88%.</p>
-                        <span className="text-[10px] text-slate-500 mt-1 inline-block">Yesterday</span>
-                      </div>
+                    <div className="py-8 text-center text-xs text-slate-400 space-y-1.5">
+                      <Bell className="w-8 h-8 mx-auto text-slate-600 opacity-50" />
+                      <p className="font-semibold text-slate-300">No new notifications</p>
+                      <p className="text-[11px] text-slate-500 max-w-[200px] mx-auto">
+                        Appointment reminders, doctor notes, and lab releases will be posted here.
+                      </p>
                     </div>
                   </motion.div>
                 )}
@@ -764,6 +753,7 @@ export function PatientDashboard() {
                   symptomsHistory={symptomsHistory}
                   onShowToast={showToast}
                   onBookAppointment={() => setActiveSection('appointments')}
+                  onNavigate={sec => setActiveSection(sec)}
                 />
               )}
 
@@ -1847,7 +1837,7 @@ function VitalsSection({
               </label>
               <input
                 type="number"
-                placeholder="72"
+                placeholder="e.g. 72"
                 value={heartRate}
                 onChange={e => setHeartRate(e.target.value)}
                 className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-sm text-slate-100 focus:border-teal-400 outline-none"
@@ -1886,7 +1876,7 @@ function VitalsSection({
               <input
                 type="number"
                 step="0.1"
-                placeholder="36.8"
+                placeholder="e.g. 36.8"
                 value={temp}
                 onChange={e => setTemp(e.target.value)}
                 className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-sm text-slate-100 focus:border-teal-400 outline-none"
@@ -1900,7 +1890,7 @@ function VitalsSection({
               </label>
               <input
                 type="number"
-                placeholder="98"
+                placeholder="e.g. 98"
                 value={o2Sat}
                 onChange={e => setO2Sat(e.target.value)}
                 className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-sm text-slate-100 focus:border-teal-400 outline-none"
@@ -1915,7 +1905,7 @@ function VitalsSection({
               <input
                 type="number"
                 step="0.1"
-                placeholder="71.0"
+                placeholder="e.g. 70"
                 value={weight}
                 onChange={e => setWeight(e.target.value)}
                 className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-sm text-slate-100 focus:border-teal-400 outline-none"
@@ -1929,7 +1919,7 @@ function VitalsSection({
               </label>
               <input
                 type="number"
-                placeholder="175"
+                placeholder="e.g. 175"
                 value={height}
                 onChange={e => setHeight(e.target.value)}
                 className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-sm text-slate-100 focus:border-teal-400 outline-none"
@@ -1943,7 +1933,7 @@ function VitalsSection({
               </label>
               <input
                 type="number"
-                placeholder="95"
+                placeholder="e.g. 95"
                 value={bloodGlucose}
                 onChange={e => setBloodGlucose(e.target.value)}
                 className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-sm text-slate-100 focus:border-teal-400 outline-none"
@@ -1957,7 +1947,7 @@ function VitalsSection({
               </label>
               <input
                 type="text"
-                placeholder="Resting, post-workout, etc."
+                placeholder="Resting, morning, post-exercise..."
                 value={notes}
                 onChange={e => setNotes(e.target.value)}
                 className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-sm text-slate-100 focus:border-teal-400 outline-none"
@@ -1978,7 +1968,7 @@ function VitalsSection({
         </form>
       </div>
 
-      {/* Historical Trend Chart Simulation */}
+      {/* Historical Trend Chart */}
       <div className="rounded-3xl bg-slate-900/60 border border-slate-800/80 p-6 backdrop-blur-xl">
         <div className="flex items-center justify-between mb-6">
           <div>
@@ -1996,34 +1986,42 @@ function VitalsSection({
         </div>
 
         {/* CSS/SVG Bar Chart visualization */}
-        <div className="h-52 w-full flex items-end justify-between gap-3 pt-6 pb-2 border-b border-slate-800">
-          {vitalsHistory.map((item, idx) => {
-            const hr = item.heart_rate || 72;
-            const bp = item.systolic_bp || 120;
-            const hrHeight = Math.min(100, Math.max(20, (hr / 120) * 100));
-            const bpHeight = Math.min(100, Math.max(20, (bp / 160) * 100));
+        {vitalsHistory.length > 0 ? (
+          <div className="h-52 w-full flex items-end justify-between gap-3 pt-6 pb-2 border-b border-slate-800">
+            {vitalsHistory.map((item, idx) => {
+              const hr = item.heart_rate || 0;
+              const bp = item.systolic_bp || 0;
+              const hrHeight = Math.min(100, Math.max(10, (hr / 140) * 100));
+              const bpHeight = Math.min(100, Math.max(10, (bp / 180) * 100));
 
-            return (
-              <div key={idx} className="flex-1 flex flex-col items-center h-full justify-end group">
-                <div className="w-full max-w-[48px] flex items-end justify-center gap-1.5 h-full">
-                  <div
-                    style={{ height: `${hrHeight}%` }}
-                    className="w-1/2 bg-teal-500/80 hover:bg-teal-400 rounded-t-lg transition relative"
-                    title={`Heart Rate: ${hr} bpm`}
-                  />
-                  <div
-                    style={{ height: `${bpHeight}%` }}
-                    className="w-1/2 bg-cyan-500/80 hover:bg-cyan-400 rounded-t-lg transition relative"
-                    title={`Systolic BP: ${bp} mmHg`}
-                  />
+              return (
+                <div key={idx} className="flex-1 flex flex-col items-center h-full justify-end group">
+                  <div className="w-full max-w-[48px] flex items-end justify-center gap-1.5 h-full">
+                    <div
+                      style={{ height: `${hrHeight}%` }}
+                      className="w-1/2 bg-teal-500/80 hover:bg-teal-400 rounded-t-lg transition relative"
+                      title={`Heart Rate: ${hr} bpm`}
+                    />
+                    <div
+                      style={{ height: `${bpHeight}%` }}
+                      className="w-1/2 bg-cyan-500/80 hover:bg-cyan-400 rounded-t-lg transition relative"
+                      title={`Systolic BP: ${bp} mmHg`}
+                    />
+                  </div>
+                  <span className="text-[10px] text-slate-400 mt-2 font-mono truncate max-w-[60px]">
+                    {item.recorded_at ? new Date(item.recorded_at).toLocaleDateString('en-US', { month: 'numeric', day: 'numeric' }) : `Log ${idx + 1}`}
+                  </span>
                 </div>
-                <span className="text-[10px] text-slate-400 mt-2 font-mono truncate max-w-[60px]">
-                  {item.recorded_at ? new Date(item.recorded_at).toLocaleDateString('en-US', { month: 'numeric', day: 'numeric' }) : `Log ${idx + 1}`}
-                </span>
-              </div>
-            );
-          })}
-        </div>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="py-12 text-center text-xs text-slate-500 border-b border-slate-800 space-y-1.5">
+            <Activity className="w-8 h-8 text-slate-600 mx-auto opacity-50" />
+            <p className="font-semibold text-slate-300">No vitals history recorded yet</p>
+            <p className="text-[11px] text-slate-500">Record your baseline blood pressure and heart rate using the form above to initialize trends.</p>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -2045,8 +2043,8 @@ function AppointmentsSection({
   onNavigate,
 }: AppointmentsSectionProps) {
   const [tab, setTab] = useState<'upcoming' | 'past' | 'book'>('upcoming');
-  const [selectedDoctor, setSelectedDoctor] = useState('doc-1');
-  const [date, setDate] = useState('2026-03-30');
+  const [selectedDoctor, setSelectedDoctor] = useState(doctorsList[0]?.id || '');
+  const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
   const [timeSlot, setTimeSlot] = useState('10:00 AM');
   const [consultType, setConsultType] = useState<'Video Consultation' | 'In-Person Clinic Visit' | 'Audio Call'>('Video Consultation');
   const [reason, setReason] = useState('');
@@ -2056,8 +2054,8 @@ function AppointmentsSection({
   const handleBook = (e: React.FormEvent) => {
     e.preventDefault();
     const doc = doctorsList.find(d => d.id === selectedDoctor) || doctorsList[0] || {
-      full_name: 'Dr. Sarah Chen, MD',
-      specialization: 'Cardiologist',
+      full_name: 'Attending Physician',
+      specialization: 'General Medicine',
     };
 
     const newApt: Appointment = {
@@ -2498,8 +2496,9 @@ interface AIAssistantSectionProps {
   patientName: string;
   latestVitals: VitalsData | null;
   symptomsHistory: any[];
-  onShowToast: (t: string, d?: string) => void;
+  onShowToast: (t: string, d?: string, type?: 'success' | 'info' | 'error') => void;
   onBookAppointment: () => void;
+  onNavigate: (section: SectionId) => void;
 }
 
 function AIAssistantSection({
@@ -2508,9 +2507,10 @@ function AIAssistantSection({
   symptomsHistory,
   onShowToast,
   onBookAppointment,
+  onNavigate,
 }: AIAssistantSectionProps) {
   const [analyzing, setAnalyzing] = useState(false);
-  const [hasAnalysis, setHasAnalysis] = useState(true);
+  const [hasAnalysis, setHasAnalysis] = useState(false);
 
   const runAnalysis = () => {
     setAnalyzing(true);
@@ -2518,9 +2518,56 @@ function AIAssistantSection({
     setTimeout(() => {
       setAnalyzing(false);
       setHasAnalysis(true);
-      onShowToast('Analysis Complete', 'AI health synthesis generated based on recent logs.');
-    }, 2000);
+      if (latestVitals || symptomsHistory.length > 0) {
+        onShowToast('Analysis Complete', 'Clinical synthesis generated from your recorded logs.');
+      } else {
+        onShowToast('Notice', 'No vitals or symptoms logged yet to synthesize.', 'info');
+      }
+    }, 1500);
   };
+
+  const sys = latestVitals?.systolic_bp;
+  const dia = latestVitals?.diastolic_bp;
+  const hr = latestVitals?.heart_rate;
+  const o2 = latestVitals?.oxygen_saturation;
+
+  let bpStatus = 'Normal Blood Pressure';
+  let bpDetail = 'Readings are within standard reference ranges.';
+  let isModerateRisk = false;
+
+  if (sys && dia) {
+    if (sys >= 140 || dia >= 90) {
+      bpStatus = 'Hypertension Stage 2 Range';
+      bpDetail = `Recorded ${sys}/${dia} mmHg. Significantly above standard guideline (<120/80 mmHg). Medical evaluation recommended.`;
+      isModerateRisk = true;
+    } else if (sys >= 130 || dia >= 80) {
+      bpStatus = 'Hypertension Stage 1 Range';
+      bpDetail = `Recorded ${sys}/${dia} mmHg. Mildly elevated. Daily tracking and sodium moderation recommended.`;
+      isModerateRisk = true;
+    } else if (sys >= 120) {
+      bpStatus = 'Elevated Blood Pressure';
+      bpDetail = `Recorded ${sys}/${dia} mmHg. Slightly above optimal resting baseline (<120/80 mmHg).`;
+    } else {
+      bpStatus = 'Optimal Resting Blood Pressure';
+      bpDetail = `Recorded ${sys}/${dia} mmHg. Within target resting limits (<120/80 mmHg).`;
+    }
+  }
+
+  let hrStatus = 'Resting Heart Rate';
+  let hrDetail = 'Within standard parameters.';
+  if (hr) {
+    if (hr > 100) {
+      hrStatus = `Elevated Pulse (${hr} bpm)`;
+      hrDetail = 'Resting heart rate exceeds 100 bpm. Ensure adequate hydration and rest.';
+      isModerateRisk = true;
+    } else if (hr < 60) {
+      hrStatus = `Resting Bradycardia (${hr} bpm)`;
+      hrDetail = 'Below typical resting rate. Often observed in endurance athletes; consult if experiencing lightheadedness.';
+    } else {
+      hrStatus = `Optimal Resting Pulse (${hr} bpm)`;
+      hrDetail = 'Comfortably within standard healthy adult range (60 - 100 bpm).';
+    }
+  }
 
   return (
     <div className="space-y-6">
@@ -2533,7 +2580,9 @@ function AIAssistantSection({
             </div>
             <h2 className="text-xl font-bold text-white">AI Clinical Synthesis & Triage</h2>
             <p className="text-xs text-slate-300 max-w-xl">
-              Cross-evaluates your active biometrics (BP {latestVitals?.systolic_bp || 120}/{latestVitals?.diastolic_bp || 80}, HR {latestVitals?.heart_rate || 74}), logged symptoms, and medical history.
+              {latestVitals
+                ? `Cross-evaluates your active biometrics (BP ${latestVitals.systolic_bp || '--'}/${latestVitals.diastolic_bp || '--'} mmHg, HR ${latestVitals.heart_rate || '--'} bpm), logged symptoms, and medical history.`
+                : 'Cross-evaluates your recorded biometrics, logged symptoms, and medical history once you input your readings.'}
             </p>
           </div>
 
@@ -2563,129 +2612,191 @@ function AIAssistantSection({
           </div>
           <h3 className="text-base font-bold text-white">Synthesizing Clinical Signals...</h3>
           <p className="text-xs text-slate-400 max-w-md mx-auto">
-            Correlating systolic pressure, heart rate variability, recent headache severity, and clinical guidelines.
+            Correlating systolic and diastolic pressure, resting pulse, recorded symptoms, and clinical guidelines.
           </p>
+        </div>
+      )}
+
+      {/* Initial state before analysis */}
+      {!hasAnalysis && !analyzing && (
+        <div className="p-12 rounded-3xl bg-slate-900/40 border border-slate-800/80 text-center space-y-4">
+          <Sparkles className="w-10 h-10 text-teal-400 mx-auto opacity-70" />
+          <h3 className="text-base font-bold text-white">AI Health Advisor Ready</h3>
+          <p className="text-xs text-slate-400 max-w-md mx-auto">
+            {latestVitals || symptomsHistory.length > 0
+              ? 'Click "Analyze My Health" above to cross-reference your recorded vitals and symptoms against clinical guidelines.'
+              : 'Record your baseline vitals or log current symptoms to enable your personalized clinical AI synthesis.'}
+          </p>
+          {!latestVitals && (
+            <button
+              onClick={() => onNavigate('vitals')}
+              className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-teal-500 hover:bg-teal-400 text-slate-950 font-bold text-xs shadow-md transition"
+            >
+              <Activity className="w-3.5 h-3.5" /> Record Baseline Vitals
+            </button>
+          )}
         </div>
       )}
 
       {/* Analysis Output */}
       {hasAnalysis && !analyzing && (
         <div className="space-y-6">
-          {/* Urgency Badge Alert */}
-          <div className="p-4 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <span className="w-3 h-3 rounded-full bg-emerald-400 animate-pulse" />
-              <div>
-                <span className="text-xs font-bold text-emerald-300 uppercase tracking-wider block">
-                  Triage Status: Routine / Non-Urgent Care
+          {!latestVitals && symptomsHistory.length === 0 ? (
+            <div className="p-12 rounded-3xl bg-slate-900/40 border border-slate-800 text-center space-y-3">
+              <AlertCircle className="w-10 h-10 text-amber-400 mx-auto" />
+              <h3 className="text-base font-bold text-white">No Clinical Data on Record</h3>
+              <p className="text-xs text-slate-400 max-w-md mx-auto">
+                MedConnect AI evaluates verified biometric readings rather than hypothetical estimates. Please record your vitals or log symptoms to generate a real assessment.
+              </p>
+              <button
+                onClick={() => onNavigate('vitals')}
+                className="mt-2 inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-teal-500 hover:bg-teal-400 text-slate-950 font-bold text-xs shadow-md transition"
+              >
+                <Activity className="w-3.5 h-3.5" /> Record Vitals Now
+              </button>
+            </div>
+          ) : (
+            <>
+              {/* Urgency Badge Alert */}
+              <div className={cn(
+                'p-4 rounded-2xl border flex items-center justify-between',
+                isModerateRisk
+                  ? 'bg-amber-500/10 border-amber-500/30'
+                  : 'bg-emerald-500/10 border-emerald-500/30'
+              )}>
+                <div className="flex items-center gap-3">
+                  <span className={cn(
+                    'w-3 h-3 rounded-full animate-pulse',
+                    isModerateRisk ? 'bg-amber-400' : 'bg-emerald-400'
+                  )} />
+                  <div>
+                    <span className={cn(
+                      'text-xs font-bold uppercase tracking-wider block',
+                      isModerateRisk ? 'text-amber-300' : 'text-emerald-300'
+                    )}>
+                      {isModerateRisk ? 'Triage Status: Follow-Up Recommended' : 'Triage Status: Routine / Non-Urgent Care'}
+                    </span>
+                    <span className="text-xs text-slate-300">
+                      {isModerateRisk
+                        ? 'One or more biometric values fall outside ideal target ranges. Review the recommendations below.'
+                        : 'No acute distress signals detected. Biometrics fall within standard clinical limits.'}
+                    </span>
+                  </div>
+                </div>
+                <span className={cn(
+                  'text-[11px] font-semibold px-3 py-1 rounded-full border',
+                  isModerateRisk
+                    ? 'text-amber-400 bg-amber-500/20 border-amber-500/40'
+                    : 'text-emerald-400 bg-emerald-500/20 border-emerald-500/40'
+                )}>
+                  {isModerateRisk ? 'Review Needed' : 'Low Risk'}
                 </span>
-                <span className="text-xs text-slate-300">
-                  No acute distress signals detected. Biometrics fall within safe clinical ranges.
-                </span>
-              </div>
-            </div>
-            <span className="text-[11px] text-emerald-400 font-semibold px-3 py-1 rounded-full bg-emerald-500/20 border border-emerald-500/40">
-              Low Risk
-            </span>
-          </div>
-
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {/* Differential Condition Likelihoods */}
-            <div className="rounded-3xl bg-slate-900/60 border border-slate-800/80 p-6 backdrop-blur-xl space-y-5">
-              <h3 className="font-bold text-white text-base">Possible Correlated Conditions</h3>
-              <div className="space-y-4">
-                {/* Condition 1 */}
-                <div className="space-y-1.5">
-                  <div className="flex justify-between text-xs">
-                    <span className="font-semibold text-slate-200">Tension-Type Headache (Ergonomic / Eye Strain)</span>
-                    <span className="font-bold text-teal-400">76% Likelihood</span>
-                  </div>
-                  <div className="w-full bg-slate-800 rounded-full h-2 overflow-hidden">
-                    <div className="bg-gradient-to-r from-teal-500 to-cyan-400 h-2 rounded-full" style={{ width: '76%' }} />
-                  </div>
-                  <p className="text-[11px] text-slate-400">
-                    Matches afternoon timing, bilateral mild pain score (3/10), and absence of fever.
-                  </p>
-                </div>
-
-                {/* Condition 2 */}
-                <div className="space-y-1.5">
-                  <div className="flex justify-between text-xs">
-                    <span className="font-semibold text-slate-200">Mild Hydration Deficit</span>
-                    <span className="font-bold text-cyan-400">62% Likelihood</span>
-                  </div>
-                  <div className="w-full bg-slate-800 rounded-full h-2 overflow-hidden">
-                    <div className="bg-gradient-to-r from-cyan-500 to-teal-400 h-2 rounded-full" style={{ width: '62%' }} />
-                  </div>
-                  <p className="text-[11px] text-slate-400">
-                    Correlates with slight resting heart rate elevation (74 bpm) and screen work.
-                  </p>
-                </div>
-
-                {/* Condition 3 */}
-                <div className="space-y-1.5">
-                  <div className="flex justify-between text-xs">
-                    <span className="font-semibold text-slate-200">Cervical Spine Muscle Strain</span>
-                    <span className="font-bold text-slate-400">28% Likelihood</span>
-                  </div>
-                  <div className="w-full bg-slate-800 rounded-full h-2 overflow-hidden">
-                    <div className="bg-slate-600 h-2 rounded-full" style={{ width: '28%' }} />
-                  </div>
-                  <p className="text-[11px] text-slate-400">
-                    Secondary to prolonged desk sitting and posture fatigue.
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            {/* Recommendations & Red Flags */}
-            <div className="rounded-3xl bg-slate-900/60 border border-slate-800/80 p-6 backdrop-blur-xl flex flex-col justify-between space-y-4">
-              <div>
-                <h3 className="font-bold text-white text-base mb-3">AI Actionable Recommendations</h3>
-                <ul className="space-y-2.5 text-xs text-slate-300">
-                  <li className="flex items-start gap-2">
-                    <CheckCircle2 className="w-4 h-4 text-teal-400 flex-shrink-0 mt-0.5" />
-                    <span>Hydrate with 500ml water and electrolytes immediately.</span>
-                  </li>
-                  <li className="flex items-start gap-2">
-                    <CheckCircle2 className="w-4 h-4 text-teal-400 flex-shrink-0 mt-0.5" />
-                    <span>Implement the 20-20-20 rule for screen work (look 20 feet away every 20 minutes for 20 seconds).</span>
-                  </li>
-                  <li className="flex items-start gap-2">
-                    <CheckCircle2 className="w-4 h-4 text-teal-400 flex-shrink-0 mt-0.5" />
-                    <span>Continue taking prescribed Magnesium Glycinate before bedtime.</span>
-                  </li>
-                </ul>
-
-                <div className="mt-5 pt-4 border-t border-slate-800/80">
-                  <h4 className="text-xs font-bold text-rose-400 flex items-center gap-1.5">
-                    <AlertTriangle className="w-3.5 h-3.5" /> When to Seek Immediate Medical Attention:
-                  </h4>
-                  <p className="text-[11px] text-slate-400 mt-1">
-                    Sudden explosive "thunderclap" headache, vision loss, confusion, high fever with stiff neck, or numbness.
-                  </p>
-                </div>
               </div>
 
-              <div className="pt-4 border-t border-slate-800 flex items-center justify-between">
-                <span className="text-xs text-slate-400">Want a professional review?</span>
-                <button
-                  onClick={onBookAppointment}
-                  className="px-4 py-2 rounded-xl bg-teal-500 hover:bg-teal-400 text-slate-950 font-bold text-xs shadow transition"
-                >
-                  Consult Your Doctor
-                </button>
-              </div>
-            </div>
-          </div>
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                {/* Physiological Observations */}
+                <div className="rounded-3xl bg-slate-900/60 border border-slate-800/80 p-6 backdrop-blur-xl space-y-5">
+                  <h3 className="font-bold text-white text-base">Recorded Biometric Observations</h3>
+                  <div className="space-y-4">
+                    {/* BP */}
+                    <div className="space-y-1.5 p-3.5 rounded-2xl bg-white/5 border border-white/10">
+                      <div className="flex justify-between text-xs">
+                        <span className="font-semibold text-slate-200">{bpStatus}</span>
+                        <span className="font-bold text-teal-400">{sys && dia ? `${sys}/${dia} mmHg` : 'Not Logged'}</span>
+                      </div>
+                      <p className="text-[11px] text-slate-400">{bpDetail}</p>
+                    </div>
 
-          {/* Prominent Medical Disclaimer Banner */}
-          <div className="p-4 rounded-2xl bg-slate-900 border border-slate-800 flex items-start gap-3 text-xs text-slate-400">
-            <Info className="w-4 h-4 text-teal-400 flex-shrink-0 mt-0.5" />
-            <p className="leading-relaxed">
-              <strong className="text-slate-200">Clinical Disclaimer:</strong> MedConnect AI provides health intelligence for informational and triage purposes only. It does not replace certified physician evaluation, formal diagnosis, or medical prescription. If you are experiencing a medical emergency, call your local emergency service (911) immediately.
-            </p>
-          </div>
+                    {/* HR */}
+                    <div className="space-y-1.5 p-3.5 rounded-2xl bg-white/5 border border-white/10">
+                      <div className="flex justify-between text-xs">
+                        <span className="font-semibold text-slate-200">{hrStatus}</span>
+                        <span className="font-bold text-cyan-400">{hr ? `${hr} bpm` : 'Not Logged'}</span>
+                      </div>
+                      <p className="text-[11px] text-slate-400">{hrDetail}</p>
+                    </div>
+
+                    {/* Oxygen */}
+                    {o2 && (
+                      <div className="space-y-1.5 p-3.5 rounded-2xl bg-white/5 border border-white/10">
+                        <div className="flex justify-between text-xs">
+                          <span className="font-semibold text-slate-200">Blood Oxygen Saturation</span>
+                          <span className="font-bold text-teal-400">{o2}% SpO2</span>
+                        </div>
+                        <p className="text-[11px] text-slate-400">
+                          {o2 >= 95 ? 'Normal arterial oxygenation.' : 'Slightly sub-optimal. Seek clinical review if persistent.'}
+                        </p>
+                      </div>
+                    )}
+
+                    {/* Symptoms */}
+                    {symptomsHistory.length > 0 && (
+                      <div className="space-y-1.5 p-3.5 rounded-2xl bg-white/5 border border-white/10">
+                        <span className="font-semibold text-slate-200 text-xs block">Active Symptoms</span>
+                        <div className="flex flex-wrap gap-1.5 pt-1">
+                          {symptomsHistory.map((s, idx) => (
+                            <span key={idx} className="text-[10px] px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 border border-slate-700">
+                              {s.symptom_type} ({s.severity})
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Recommendations & Red Flags */}
+                <div className="rounded-3xl bg-slate-900/60 border border-slate-800/80 p-6 backdrop-blur-xl flex flex-col justify-between space-y-4">
+                  <div>
+                    <h3 className="font-bold text-white text-base mb-3">Actionable Health Guidance</h3>
+                    <ul className="space-y-2.5 text-xs text-slate-300">
+                      <li className="flex items-start gap-2">
+                        <CheckCircle2 className="w-4 h-4 text-teal-400 flex-shrink-0 mt-0.5" />
+                        <span>Maintain regular hydration with 2 to 3 liters of water daily.</span>
+                      </li>
+                      <li className="flex items-start gap-2">
+                        <CheckCircle2 className="w-4 h-4 text-teal-400 flex-shrink-0 mt-0.5" />
+                        <span>Log readings at the same time each morning for reliable trending.</span>
+                      </li>
+                      {isModerateRisk && (
+                        <li className="flex items-start gap-2">
+                          <CheckCircle2 className="w-4 h-4 text-teal-400 flex-shrink-0 mt-0.5" />
+                          <span>Reduce dietary sodium intake and log morning/evening blood pressure readings.</span>
+                        </li>
+                      )}
+                    </ul>
+
+                    <div className="mt-5 pt-4 border-t border-slate-800/80">
+                      <h4 className="text-xs font-bold text-rose-400 flex items-center gap-1.5">
+                        <AlertTriangle className="w-3.5 h-3.5" /> When to Seek Immediate Medical Care:
+                      </h4>
+                      <p className="text-[11px] text-slate-400 mt-1">
+                        Chest pain or pressure, severe shortness of breath, sudden weakness or numbness on one side of body, sudden difficulty speaking, or sudden loss of vision.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="pt-4 border-t border-slate-800 flex items-center justify-between">
+                    <span className="text-xs text-slate-400">Need professional medical care?</span>
+                    <button
+                      onClick={onBookAppointment}
+                      className="px-4 py-2 rounded-xl bg-teal-500 hover:bg-teal-400 text-slate-950 font-bold text-xs shadow transition"
+                    >
+                      Book Consultation
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Prominent Medical Disclaimer Banner */}
+              <div className="p-4 rounded-2xl bg-slate-900 border border-slate-800 flex items-start gap-3 text-xs text-slate-400">
+                <Info className="w-4 h-4 text-teal-400 flex-shrink-0 mt-0.5" />
+                <p className="leading-relaxed">
+                  <strong className="text-slate-200">Clinical Disclaimer:</strong> MedConnect AI provides health synthesis for informational and triage purposes only. It does not replace certified physician evaluation, formal diagnosis, or medical prescription. If you are experiencing a medical emergency, contact emergency medical services immediately.
+                </p>
+              </div>
+            </>
+          )}
         </div>
       )}
     </div>
@@ -2711,20 +2822,30 @@ function ProfileSection({
   onProfileUpdated,
   onShowToast,
 }: ProfileSectionProps) {
-  const [fullName, setFullName] = useState(profile?.full_name || 'Sarah Jenkins');
-  const [age, setAge] = useState(profile?.age?.toString() || '32');
-  const [gender, setGender] = useState(profile?.gender || 'female');
-  const [bloodGroup, setBloodGroup] = useState(
-    profile?.metadata && (profile.metadata as any).blood_group ? (profile.metadata as any).blood_group : 'O+'
+  const [fullName, setFullName] = useState(
+    profile?.full_name || (user?.user_metadata?.full_name as string) || (user?.email ? user.email.split('@')[0] : '')
   );
-  const [phone, setPhone] = useState(profile?.phone || '+1 (555) 349-2819');
+  const [age, setAge] = useState(profile?.age?.toString() || '');
+  const [gender, setGender] = useState(profile?.gender || 'prefer_not_to_say');
+  const [bloodGroup, setBloodGroup] = useState(
+    profile?.metadata && (profile.metadata as any).blood_group ? (profile.metadata as any).blood_group : ''
+  );
+  const [phone, setPhone] = useState(profile?.phone || '');
   const [emergencyContact, setEmergencyContact] = useState(
     profile?.metadata && (profile.metadata as any).emergency_contact
       ? (profile.metadata as any).emergency_contact
-      : 'John Jenkins (Spouse) - +1 (555) 901-2299'
+      : ''
   );
-  const [allergies, setAllergies] = useState('Penicillin, Seasonal Grass Pollen');
-  const [chronicConditions, setChronicConditions] = useState('Mild Sinus Tachycardia, History of Tension Headaches');
+  const [allergies, setAllergies] = useState(
+    profile?.metadata && (profile.metadata as any).allergies
+      ? (profile.metadata as any).allergies
+      : ''
+  );
+  const [chronicConditions, setChronicConditions] = useState(
+    profile?.metadata && (profile.metadata as any).chronic_conditions
+      ? (profile.metadata as any).chronic_conditions
+      : ''
+  );
   const [saving, setSaving] = useState(false);
 
   const handleSave = async (e: React.FormEvent) => {
@@ -2757,22 +2878,22 @@ function ProfileSection({
       <div className="rounded-3xl bg-slate-900/60 border border-slate-800/80 p-6 backdrop-blur-xl flex flex-col sm:flex-row sm:items-center justify-between gap-6">
         <div className="flex items-center gap-4">
           <div className="w-16 h-16 rounded-2xl bg-gradient-to-tr from-teal-500 to-cyan-400 flex items-center justify-center text-slate-950 font-black text-2xl shadow-xl shadow-teal-500/20">
-            {fullName.slice(0, 2).toUpperCase()}
+            {fullName ? fullName.slice(0, 2).toUpperCase() : 'ME'}
           </div>
           <div>
-            <h2 className="text-xl font-bold text-white">{fullName}</h2>
+            <h2 className="text-xl font-bold text-white">{fullName || 'Your Health Profile'}</h2>
             <div className="flex flex-wrap items-center gap-2 mt-1">
               <span className="font-mono text-xs text-teal-400 bg-teal-500/10 px-2 py-0.5 rounded-md border border-teal-500/20">
                 {patientIdCode}
               </span>
-              <span className="text-xs text-slate-400">• Blood: {bloodGroup}</span>
-              <span className="text-xs text-slate-400">• Age: {age} yrs</span>
+              <span className="text-xs text-slate-400">• Blood: {bloodGroup || '--'}</span>
+              <span className="text-xs text-slate-400">• Age: {age ? `${age} yrs` : '--'}</span>
             </div>
           </div>
         </div>
 
         <div className="text-xs text-slate-400 sm:text-right">
-          <p>Account Email: {user?.email || 'patient@medconnect.ai'}</p>
+          <p>Account Email: {user?.email || ''}</p>
           <span className="text-emerald-400 font-semibold inline-flex items-center gap-1 mt-1">
             <ShieldCheck className="w-3.5 h-3.5" /> HIPAA Encrypted Identity
           </span>
@@ -2789,6 +2910,7 @@ function ProfileSection({
             <input
               type="text"
               required
+              placeholder="Enter your full legal name"
               value={fullName}
               onChange={e => setFullName(e.target.value)}
               className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-sm text-slate-100 focus:border-teal-400 outline-none"
@@ -2799,6 +2921,7 @@ function ProfileSection({
             <label className="block text-xs font-semibold text-slate-300 mb-1.5">Age</label>
             <input
               type="number"
+              placeholder="Age (years)"
               value={age}
               onChange={e => setAge(e.target.value)}
               className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-sm text-slate-100 focus:border-teal-400 outline-none"
@@ -2812,10 +2935,10 @@ function ProfileSection({
               onChange={e => setGender(e.target.value)}
               className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-sm text-slate-100 focus:border-teal-400 outline-none"
             >
+              <option value="prefer_not_to_say">Prefer not to say</option>
               <option value="female">Female</option>
               <option value="male">Male</option>
               <option value="other">Other</option>
-              <option value="prefer_not_to_say">Prefer not to say</option>
             </select>
           </div>
 
@@ -2826,6 +2949,7 @@ function ProfileSection({
               onChange={e => setBloodGroup(e.target.value)}
               className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-sm text-slate-100 focus:border-teal-400 outline-none"
             >
+              <option value="">Select Blood Group</option>
               {['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'].map(b => (
                 <option key={b} value={b}>{b}</option>
               ))}
@@ -2836,6 +2960,7 @@ function ProfileSection({
             <label className="block text-xs font-semibold text-slate-300 mb-1.5">Contact Phone</label>
             <input
               type="tel"
+              placeholder="Phone number"
               value={phone}
               onChange={e => setPhone(e.target.value)}
               className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-sm text-slate-100 focus:border-teal-400 outline-none"
@@ -2846,6 +2971,7 @@ function ProfileSection({
             <label className="block text-xs font-semibold text-slate-300 mb-1.5">Emergency Contact Details</label>
             <input
               type="text"
+              placeholder="Name & emergency phone"
               value={emergencyContact}
               onChange={e => setEmergencyContact(e.target.value)}
               className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-sm text-slate-100 focus:border-teal-400 outline-none"

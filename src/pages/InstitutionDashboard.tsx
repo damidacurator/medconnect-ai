@@ -792,53 +792,12 @@ function OverviewSection({
       {/* Recent Activity Feed */}
       <div className="rounded-2xl bg-white/5 border border-white/10 p-6 backdrop-blur-md space-y-4">
         <h3 className="text-base font-semibold text-white">Live Institutional Activity Log</h3>
-        <div className="divide-y divide-white/5">
-          {[
-            {
-              title: 'New Patient Intake & Triage',
-              desc: 'Patient Olumide Bakare (PID-992140) checked in at Cardiology Suite 3A.',
-              time: '12 mins ago',
-              icon: UserCheck,
-              color: 'text-teal-400 bg-teal-500/10',
-            },
-            {
-              title: 'Specialist Shift Started',
-              desc: 'Dr. Chidi Okonkwo (Trauma & Emergency) logged in to Emergency Wing.',
-              time: '45 mins ago',
-              icon: Stethoscope,
-              color: 'text-cyan-400 bg-cyan-500/10',
-            },
-            {
-              title: 'Consent Signature Verified',
-              desc: 'Patient Ngozi Chimamanda signed consent for digital health summary exchange.',
-              time: '1 hour ago',
-              icon: ShieldCheck,
-              color: 'text-emerald-400 bg-emerald-500/10',
-            },
-            {
-              title: 'ICU Bed Availability Updated',
-              desc: 'Bed ICU-08 transitioned to Sterilization & Preparation state.',
-              time: '2 hours ago',
-              icon: Activity,
-              color: 'text-indigo-400 bg-indigo-500/10',
-            },
-          ].map((item, idx) => {
-            const Icon = item.icon;
-            return (
-              <div key={idx} className="py-3 flex items-center justify-between gap-4">
-                <div className="flex items-center gap-3">
-                  <div className={cn('p-2.5 rounded-xl border border-white/5', item.color)}>
-                    <Icon className="w-4 h-4" />
-                  </div>
-                  <div>
-                    <h4 className="text-xs font-semibold text-white">{item.title}</h4>
-                    <p className="text-xs text-slate-400">{item.desc}</p>
-                  </div>
-                </div>
-                <span className="text-[11px] text-slate-500 whitespace-nowrap">{item.time}</span>
-              </div>
-            );
-          })}
+        <div className="p-8 text-center space-y-2">
+          <Activity className="w-8 h-8 text-slate-600 mx-auto opacity-50" />
+          <p className="text-sm font-medium text-slate-300">No activity logged yet</p>
+          <p className="text-xs text-slate-500 max-w-sm mx-auto">
+            Staff check-ins, department updates, and patient intakes will be streamed live to this institutional audit trail.
+          </p>
         </div>
       </div>
     </div>
@@ -886,7 +845,7 @@ function DoctorsSection({ doctors, departments, onAddDoctor }: DoctorsProps) {
       id: `doc-${Date.now()}`,
       docCode: newDocCode || `DOC-${Math.floor(10000 + Math.random() * 90000)}`,
       name: newDocName,
-      email: newDocEmail || `${newDocName.toLowerCase().replace(/\s+/g, '.')}@apexhealth.org`,
+      email: newDocEmail || `${newDocName.toLowerCase().replace(/\s+/g, '.')}@medconnect.ai`,
       phone: '+234 800 000 0000',
       specialization: newDocSpecialty || 'General Practitioner',
       department: newDocDept,
@@ -1062,7 +1021,7 @@ function DoctorsSection({ doctors, departments, onAddDoctor }: DoctorsProps) {
                 <input
                   type="text"
                   required
-                  placeholder="e.g. Dr. Aminu Kano"
+                  placeholder="e.g. Dr. Full Name"
                   value={newDocName}
                   onChange={(e) => setNewDocName(e.target.value)}
                   className="w-full px-3.5 py-2 rounded-xl bg-white/5 border border-white/10 text-white text-sm focus:outline-none focus:border-teal-500/50"
@@ -1076,7 +1035,7 @@ function DoctorsSection({ doctors, departments, onAddDoctor }: DoctorsProps) {
                   </label>
                   <input
                     type="text"
-                    placeholder="e.g. DOC-98214"
+                    placeholder="e.g. DOC-10001"
                     value={newDocCode}
                     onChange={(e) => setNewDocCode(e.target.value)}
                     className="w-full px-3.5 py-2 rounded-xl bg-white/5 border border-white/10 text-white text-sm focus:outline-none focus:border-teal-500/50 font-mono"
@@ -1088,7 +1047,7 @@ function DoctorsSection({ doctors, departments, onAddDoctor }: DoctorsProps) {
                   </label>
                   <input
                     type="text"
-                    placeholder="e.g. Neurosurgeon"
+                    placeholder="e.g. Cardiologist"
                     value={newDocSpecialty}
                     onChange={(e) => setNewDocSpecialty(e.target.value)}
                     className="w-full px-3.5 py-2 rounded-xl bg-white/5 border border-white/10 text-white text-sm focus:outline-none focus:border-teal-500/50"
@@ -1119,7 +1078,7 @@ function DoctorsSection({ doctors, departments, onAddDoctor }: DoctorsProps) {
                 </label>
                 <input
                   type="email"
-                  placeholder="doctor@apexhealth.org"
+                  placeholder="doctor@institution.org"
                   value={newDocEmail}
                   onChange={(e) => setNewDocEmail(e.target.value)}
                   className="w-full px-3.5 py-2 rounded-xl bg-white/5 border border-white/10 text-white text-sm focus:outline-none focus:border-teal-500/50"
