@@ -144,181 +144,10 @@ export interface MessageItem {
   timestamp: string;
 }
 
-// Initial Mock Data
-const INITIAL_PATIENTS: Patient[] = [
-  {
-    id: 'p1',
-    pid: 'PID-948210',
-    name: 'Sarah Adebayo',
-    age: 34,
-    gender: 'Female',
-    bloodGroup: 'O+',
-    phone: '+234 803 123 4567',
-    email: 'sarah.adebayo@example.com',
-    allergies: [
-      { name: 'Penicillin', severity: 'Critical' },
-      { name: 'Peanuts', severity: 'Moderate' }
-    ],
-    chronicConditions: ['Hypertension (Stage 1)'],
-    lastVisit: '2026-09-28',
-    vitalsHistory: [
-      { date: '2026-09-28', bp: '138/88', hr: 78, temp: 36.8, spo2: 98, weight: 68 },
-      { date: '2026-08-14', bp: '142/90', hr: 82, temp: 37.1, spo2: 97, weight: 69 },
-      { date: '2026-06-02', bp: '130/85', hr: 74, temp: 36.6, spo2: 99, weight: 67 }
-    ]
-  },
-  {
-    id: 'p2',
-    pid: 'PID-832194',
-    name: 'Chidi Okafor',
-    age: 48,
-    gender: 'Male',
-    bloodGroup: 'A+',
-    phone: '+234 802 987 6543',
-    email: 'chidi.okafor@example.com',
-    allergies: [{ name: 'Sulfa Drugs', severity: 'Critical' }],
-    chronicConditions: ['Type 2 Diabetes', 'Dyslipidemia'],
-    lastVisit: '2026-10-01',
-    vitalsHistory: [
-      { date: '2026-10-01', bp: '128/82', hr: 72, temp: 36.5, spo2: 99, weight: 84 },
-      { date: '2026-07-20', bp: '132/84', hr: 76, temp: 36.7, spo2: 98, weight: 86 }
-    ]
-  },
-  {
-    id: 'p3',
-    pid: 'PID-541209',
-    name: 'Fatima Bello',
-    age: 26,
-    gender: 'Female',
-    bloodGroup: 'B+',
-    phone: '+234 814 555 1212',
-    email: 'fatima.bello@example.com',
-    allergies: [{ name: 'Aspirin', severity: 'Mild' }],
-    chronicConditions: ['Bronchial Asthma'],
-    lastVisit: '2026-09-15',
-    vitalsHistory: [
-      { date: '2026-09-15', bp: '115/75', hr: 86, temp: 37.0, spo2: 96, weight: 55 }
-    ]
-  },
-  {
-    id: 'p4',
-    pid: 'PID-629013',
-    name: 'Emeka Nwosu',
-    age: 62,
-    gender: 'Male',
-    bloodGroup: 'O-',
-    phone: '+234 703 444 8899',
-    email: 'emeka.nwosu@example.com',
-    allergies: [],
-    chronicConditions: ['Ischemic Heart Disease', 'Osteoarthritis'],
-    lastVisit: '2026-10-08',
-    vitalsHistory: [
-      { date: '2026-10-08', bp: '145/92', hr: 68, temp: 36.4, spo2: 97, weight: 79 }
-    ]
-  }
-];
-
-const INITIAL_APPOINTMENTS: Appointment[] = [
-  {
-    id: 'apt-1',
-    patientId: 'p1',
-    patientName: 'Sarah Adebayo',
-    pid: 'PID-948210',
-    time: '09:00 AM',
-    date: '2026-10-12',
-    type: 'In-Person',
-    status: 'Waiting',
-    reason: 'Follow-up for blood pressure medication review & mild palpitations',
-    vitalsTaken: true
-  },
-  {
-    id: 'apt-2',
-    patientId: 'p2',
-    patientName: 'Chidi Okafor',
-    pid: 'PID-832194',
-    time: '10:15 AM',
-    date: '2026-10-12',
-    type: 'Telehealth',
-    status: 'Waiting',
-    reason: 'Routine quarterly diabetes HbA1c review',
-    vitalsTaken: false
-  },
-  {
-    id: 'apt-3',
-    patientId: 'p3',
-    patientName: 'Fatima Bello',
-    pid: 'PID-541209',
-    time: '11:30 AM',
-    date: '2026-10-12',
-    type: 'Emergency',
-    status: 'In Progress',
-    reason: 'Acute exacerbation of wheezing and shortness of breath',
-    vitalsTaken: true
-  },
-  {
-    id: 'apt-4',
-    patientId: 'p4',
-    patientName: 'Emeka Nwosu',
-    pid: 'PID-629013',
-    time: '02:00 PM',
-    date: '2026-10-12',
-    type: 'In-Person',
-    status: 'Waiting',
-    reason: 'Bilateral knee joint stiffness and medication refills',
-    vitalsTaken: false
-  }
-];
-
-const INITIAL_CONSULTATIONS: ConsultationRecord[] = [
-  {
-    id: 'emr-rec-1',
-    emrCode: 'EMR-8K41Z90L',
-    patientId: 'p1',
-    patientName: 'Sarah Adebayo',
-    pid: 'PID-948210',
-    doctorId: 'doc-1',
-    doctorName: 'Dr. Michael Chen, MD',
-    date: '2026-09-28',
-    chiefComplaint: 'Occasional morning occipital headaches and mild dizziness for 2 weeks.',
-    hpi: 'Patient states headaches occur 3-4 mornings per week, throbbing in nature, relieved partially by rest. No blurred vision or vomiting.',
-    reviewOfSystems: ['Cardiovascular: palpitations reported', 'Neurological: mild morning cephalalgia'],
-    vitals: {
-      bp: '138/88',
-      hr: '78',
-      temp: '36.8',
-      spo2: '98',
-      rr: '16',
-      weight: '68',
-      bmi: '24.2'
-    },
-    examinationFindings: 'Conscious, alert. Heart sounds S1+S2 heard, no murmurs. Chest clear to auscultation. Fundoscopy normal.',
-    diagnoses: ['Essential Hypertension (borderline controlled)', 'Tension Cephalalgia'],
-    differentialDiagnosis: 'Secondary hypertension, Cervical spine strain',
-    treatmentPlan: 'Adjust Amlodipine to 5mg OD. Advise low sodium diet, 30 min daily brisk walking. Home BP diary for 14 days.',
-    prescriptions: [
-      {
-        id: 'rx-1',
-        medication: 'Amlodipine Besylate',
-        dosage: '5mg',
-        frequency: 'Once Daily (Morning)',
-        duration: '30 Days',
-        route: 'Oral',
-        instructions: 'Take with or without food. Avoid grapefruit juice.'
-      }
-    ],
-    labOrders: [
-      {
-        id: 'lab-1',
-        testName: 'Serum Electrolytes, Urea, Creatinine (E/U/Cr)',
-        category: 'Biochemistry',
-        urgency: 'Routine',
-        notes: 'Assess renal baseline prior to therapy optimization'
-      }
-    ],
-    followUpDate: '2026-10-12',
-    followUpNotes: 'Review home blood pressure log and check renal panel.'
-  }
-];
+// No initial mock data — doctors start with a blank slate
+const INITIAL_PATIENTS: Patient[] = [];
+const INITIAL_APPOINTMENTS: Appointment[] = [];
+const INITIAL_CONSULTATIONS: ConsultationRecord[] = [];
 
 export function DoctorDashboard() {
   const auth = useAuth?.() || {};
@@ -334,7 +163,7 @@ export function DoctorDashboard() {
   const [patients, setPatients] = useState<Patient[]>(INITIAL_PATIENTS);
   const [appointments, setAppointments] = useState<Appointment[]>(INITIAL_APPOINTMENTS);
   const [consultations, setConsultations] = useState<ConsultationRecord[]>(INITIAL_CONSULTATIONS);
-  const [selectedPatientForRecord, setSelectedPatientForRecord] = useState<Patient | null>(INITIAL_PATIENTS[0]);
+  const [selectedPatientForRecord, setSelectedPatientForRecord] = useState<Patient | null>(null);
 
   // Toast / notification banner
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -346,15 +175,15 @@ export function DoctorDashboard() {
 
   // Profile data
   const [doctorProfile, setDoctorProfile] = useState({
-    code: 'DOC-892401',
-    name: 'Dr. Michael Chen, MD',
-    title: 'Consultant Physician & Cardiologist',
-    specialization: 'Internal Medicine, Non-Invasive Cardiology',
-    license: 'MDC-83921-NG',
-    hospital: 'Apex Metropolitan Hospital & MedConnect Virtual Center',
-    phone: '+234 809 111 2233',
-    email: 'm.chen@medconnect.ai',
-    bio: 'Dual board-certified clinical specialist with 14+ years of patient-centered experience managing complex cardiovascular and metabolic conditions.'
+    code: auth.profile?.unique_code || (user ? `DOC-${user.id.replace(/-/g, '').slice(0, 9).toUpperCase()}` : 'DOC-000001'),
+    name: auth.profile?.full_name || (user?.user_metadata?.full_name as string) || 'Dr. ' + (user?.email?.split('@')[0] || 'Clinician'),
+    title: 'Consultant Physician',
+    specialization: ((auth.profile?.metadata as any)?.specialization as string) || 'General Practice',
+    license: ((auth.profile?.metadata as any)?.council_reg as string) || 'Pending Verification',
+    hospital: ((auth.profile?.metadata as any)?.current_institution as string) || 'MedConnect Healthcare Network',
+    phone: auth.profile?.phone || '',
+    email: user?.email || '',
+    bio: 'Licensed clinician providing universal telehealth and clinical care on MedConnect AI.'
   });
 
   // Schedule settings
@@ -373,17 +202,8 @@ export function DoctorDashboard() {
   });
 
   // Messaging state
-  const [selectedChatPatientId, setSelectedChatPatientId] = useState<string>('p1');
-  const [chatMessages, setChatMessages] = useState<Record<string, MessageItem[]>>({
-    p1: [
-      { id: 'm1', sender: 'patient', text: 'Hello doctor, my morning BP was 134/86 today. Should I still take the 5mg tab?', timestamp: '08:42 AM' },
-      { id: 'm2', sender: 'doctor', text: 'Good morning Sarah. Yes, continue the prescribed 5mg dose and keep logging it.', timestamp: '08:49 AM' }
-    ],
-    p2: [
-      { id: 'm3', sender: 'patient', text: 'Dr. Chen, I got my fasting blood sugar results from yesterday: 112 mg/dL.', timestamp: 'Yesterday' },
-      { id: 'm4', sender: 'doctor', text: 'Excellent progress Chidi. We will review the full panel during our virtual consult today.', timestamp: 'Yesterday' }
-    ]
-  });
+  const [selectedChatPatientId, setSelectedChatPatientId] = useState<string>('');
+  const [chatMessages, setChatMessages] = useState<Record<string, MessageItem[]>>({});
   const [chatInput, setChatInput] = useState('');
 
   // Consultation Builder Flow State
@@ -396,13 +216,13 @@ export function DoctorDashboard() {
   const [hpi, setHpi] = useState('');
   const [selectedROS, setSelectedROS] = useState<string[]>([]);
   const [vitalsInput, setVitalsInput] = useState({
-    bp: '120/80',
-    hr: '72',
-    temp: '36.7',
-    spo2: '99',
-    rr: '16',
-    weight: '70',
-    bmi: '23.5'
+    bp: '',
+    hr: '',
+    temp: '',
+    spo2: '',
+    rr: '',
+    weight: '',
+    bmi: ''
   });
   const [examinationFindings, setExaminationFindings] = useState('');
   const [diagnosisTags, setDiagnosisTags] = useState<string[]>([]);
@@ -411,34 +231,16 @@ export function DoctorDashboard() {
   const [treatmentPlan, setTreatmentPlan] = useState('');
 
   // Prescriptions in current consultation
-  const [prescriptions, setPrescriptions] = useState<PrescriptionItem[]>([
-    {
-      id: 'px-temp-1',
-      medication: 'Amlodipine',
-      dosage: '5mg',
-      frequency: 'Once Daily',
-      duration: '30 Days',
-      route: 'Oral',
-      instructions: 'Take in the morning with water'
-    }
-  ]);
+  const [prescriptions, setPrescriptions] = useState<PrescriptionItem[]>([]);
 
   // Lab orders in current consultation
-  const [labOrders, setLabOrders] = useState<LabOrderItem[]>([
-    {
-      id: 'lab-temp-1',
-      testName: 'Full Blood Count (FBC)',
-      category: 'Hematology',
-      urgency: 'Routine',
-      notes: 'Evaluate baseline cell lines'
-    }
-  ]);
+  const [labOrders, setLabOrders] = useState<LabOrderItem[]>([]);
 
-  const [followUpDate, setFollowUpDate] = useState('2026-10-26');
-  const [followUpNotes, setFollowUpNotes] = useState('Review response to medication, repeat vitals.');
+  const [followUpDate, setFollowUpDate] = useState('');
+  const [followUpNotes, setFollowUpNotes] = useState('');
 
   // AI Workspace State
-  const [aiSelectedPatientId, setAiSelectedPatientId] = useState<string>('p1');
+  const [aiSelectedPatientId, setAiSelectedPatientId] = useState<string>('');
   const [aiAnalysisLoading, setAiAnalysisLoading] = useState(false);
   const [aiRiskData, setAiRiskData] = useState<{
     cardio: number;
@@ -446,12 +248,10 @@ export function DoctorDashboard() {
     readmit: number;
     recommendations: string[];
   } | null>(null);
-  const [drugA, setDrugA] = useState('Lisinopril');
-  const [drugB, setDrugB] = useState('Spironolactone');
+  const [drugA, setDrugA] = useState('');
+  const [drugB, setDrugB] = useState('');
   const [interactionResult, setInteractionResult] = useState<string | null>(null);
-  const [aiNoteRawText, setAiNoteRawText] = useState(
-    'Patient Sarah Adebayo 34F presents with recurring morning occipital throbbing headache for 2 weeks, denies blurry vision or nausea. BP 138/88 mmHg, HR 78 bpm. Suspected tension headache with borderline elevated BP. Prescribed Amlodipine 5mg OD.'
-  );
+  const [aiNoteRawText, setAiNoteRawText] = useState('');
   const [extractedAiNote, setExtractedAiNote] = useState<any | null>(null);
 
   // Initialize consultation with queue patient if requested

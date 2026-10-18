@@ -17,6 +17,7 @@ export interface UserProfile {
   role: UserRole;
   full_name: string;
   email: string;
+  unique_code?: string;
   phone?: string;
   created_at?: string;
   metadata?: Record<string, unknown>;

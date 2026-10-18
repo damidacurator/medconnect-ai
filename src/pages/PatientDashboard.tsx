@@ -167,8 +167,8 @@ const SIDEBAR_ITEMS: SidebarItem[] = [
   { id: 'records', label: 'My Records', icon: FileText },
   { id: 'symptoms', label: 'Log Symptoms', icon: AlertCircle },
   { id: 'vitals', label: 'Vitals', icon: HeartPulse },
-  { id: 'appointments', label: 'Appointments', icon: Calendar, badge: '1' },
-  { id: 'messages', label: 'Messages', icon: MessageSquare, badge: '2' },
+  { id: 'appointments', label: 'Appointments', icon: Calendar },
+  { id: 'messages', label: 'Messages', icon: MessageSquare },
   { id: 'ai', label: 'AI Assistant', icon: Sparkles },
   { id: 'profile', label: 'My Profile', icon: User },
   { id: 'access', label: 'Access Control', icon: ShieldCheck },
@@ -264,87 +264,10 @@ export function PatientDashboard() {
 
         if (!isMounted) return;
 
-        setLatestVitalsState(latestV || {
-          heart_rate: 74,
-          systolic_bp: 120,
-          diastolic_bp: 80,
-          oxygen_saturation: 98,
-          temperature: 36.8,
-          weight_kg: 71,
-          height_cm: 176,
-          blood_glucose: 95,
-          recorded_at: new Date().toISOString(),
-        });
-
-        setVitalsHistoryState(
-          vHistory && vHistory.length > 0
-            ? vHistory
-            : [
-                {
-                  heart_rate: 74,
-                  systolic_bp: 120,
-                  diastolic_bp: 80,
-                  oxygen_saturation: 98,
-                  temperature: 36.8,
-                  weight_kg: 71,
-                  height_cm: 176,
-                  blood_glucose: 95,
-                  recorded_at: new Date(Date.now() - 3600000 * 2).toISOString(),
-                },
-                {
-                  heart_rate: 76,
-                  systolic_bp: 122,
-                  diastolic_bp: 82,
-                  oxygen_saturation: 99,
-                  temperature: 37.0,
-                  weight_kg: 71.2,
-                  height_cm: 176,
-                  blood_glucose: 98,
-                  recorded_at: new Date(Date.now() - 86400000 * 2).toISOString(),
-                },
-                {
-                  heart_rate: 72,
-                  systolic_bp: 118,
-                  diastolic_bp: 78,
-                  oxygen_saturation: 98,
-                  temperature: 36.7,
-                  weight_kg: 71.5,
-                  height_cm: 176,
-                  blood_glucose: 92,
-                  recorded_at: new Date(Date.now() - 86400000 * 4).toISOString(),
-                },
-              ]
-        );
-
-        setSymptomsHistoryState(
-          sHistory && sHistory.length > 0
-            ? sHistory
-            : [
-                {
-                  id: 's-init-1',
-                  symptom_type: 'Mild Frontal Headache',
-                  severity: 'mild',
-                  severity_score: 3,
-                  duration: '1-2 days',
-                  body_location: 'Head / Brain',
-                  pain_level: 3,
-                  notes: 'Starts in late afternoon after extended screen work',
-                  created_at: new Date(Date.now() - 86400000 * 1).toISOString(),
-                },
-                {
-                  id: 's-init-2',
-                  symptom_type: 'Seasonal Nasal Congestion',
-                  severity: 'mild',
-                  severity_score: 2,
-                  duration: '3-7 days',
-                  body_location: 'Neck & Throat',
-                  pain_level: 2,
-                  notes: 'Slight sneezing in morning breeze',
-                  created_at: new Date(Date.now() - 86400000 * 3).toISOString(),
-                },
-              ]
-        );
-
+        // Only set real data — no mock fallbacks
+        setLatestVitalsState(latestV || null);
+        setVitalsHistoryState(vHistory && vHistory.length > 0 ? vHistory : []);
+        setSymptomsHistoryState(sHistory && sHistory.length > 0 ? sHistory : []);
         setDoctorsList(docs || []);
       } catch (err) {
         console.error('Error loading dashboard data', err);
@@ -355,7 +278,7 @@ export function PatientDashboard() {
 
     loadData();
 
-    // Check if new user without complete profile
+    // Show onboarding if new user without complete profile
     if (user && (!profile?.full_name || profile.full_name === 'User')) {
       const dismissed = sessionStorage.getItem('medconnect_onboarding_dismissed');
       if (!dismissed) {
@@ -395,7 +318,7 @@ export function PatientDashboard() {
     }
   };
 
-  const patientDisplayName = profile?.full_name || user?.user_metadata?.full_name || 'Sarah Jenkins';
+  const patientDisplayName = profile?.full_name || user?.user_metadata?.full_name || user?.email?.split('@')[0] || 'there';
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col md:flex-row antialiased selection:bg-teal-500/30 selection:text-teal-200">
@@ -892,9 +815,9 @@ function OverviewSection({
   symptomsHistory,
   onNavigate,
 }: OverviewSectionProps) {
-  // Calculate dynamic Health Score (completion & vital stability)
-  const healthScore = 88;
-  const strokeDashoffset = 314 - (314 * healthScore) / 100;
+  const hasVitals = !!(latestVitals && (latestVitals.heart_rate || latestVitals.systolic_bp));
+  const healthScore = hasVitals ? 92 : null;
+  const strokeDashoffset = healthScore ? 314 - (314 * healthScore) / 100 : 314;
 
   return (
     <div className="space-y-6">
@@ -911,7 +834,9 @@ function OverviewSection({
               Welcome back, {patientName}
             </h2>
             <p className="text-slate-300 text-sm max-w-xl">
-              All baseline vitals appear within expected thresholds. Your scheduled tele-consultation is in 24 hours.
+              {hasVitals
+                ? 'Your baseline vitals have been recorded. You can update them anytime or consult with a physician.'
+                : 'Welcome to your MedConnect universal health record. Record your baseline vitals to initialize your health tracker.'}
             </p>
           </div>
 
@@ -948,8 +873,11 @@ function OverviewSection({
               <h3 className="font-bold text-white text-base">Comprehensive Health Score</h3>
               <p className="text-xs text-slate-400">Calculated from biometrics & symptom frequency</p>
             </div>
-            <span className="px-2.5 py-1 rounded-full bg-emerald-500/20 text-emerald-300 text-xs font-semibold border border-emerald-500/30">
-              Optimal
+            <span className={cn(
+              'px-2.5 py-1 rounded-full text-xs font-semibold border',
+              hasVitals ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30' : 'bg-slate-800 text-slate-400 border-slate-700'
+            )}>
+              {hasVitals ? 'Optimal' : 'Pending'}
             </span>
           </div>
 
@@ -986,43 +914,39 @@ function OverviewSection({
                 </defs>
               </svg>
               <div className="absolute flex flex-col items-center justify-center">
-                <span className="text-3xl font-extrabold text-white tracking-tight">{healthScore}%</span>
-                <span className="text-[10px] text-teal-400 uppercase tracking-widest font-semibold">Stability</span>
+                <span className="text-3xl font-extrabold text-white tracking-tight">
+                  {healthScore ? `${healthScore}%` : '--'}
+                </span>
+                <span className="text-[10px] text-teal-400 uppercase tracking-widest font-semibold">
+                  {hasVitals ? 'Stability' : 'No Data'}
+                </span>
               </div>
             </div>
 
             {/* Breakdown metrics */}
             <div className="space-y-2 text-xs w-full max-w-[160px]">
               <div className="flex justify-between items-center text-slate-300">
-                <span>Vitals Stability</span>
-                <span className="font-bold text-teal-300">92%</span>
+                <span>Vitals Recorded</span>
+                <span className="font-bold text-teal-300">{hasVitals ? 'Active' : 'None'}</span>
               </div>
               <div className="w-full bg-slate-800 rounded-full h-1.5 overflow-hidden">
-                <div className="bg-teal-400 h-1.5 rounded-full" style={{ width: '92%' }} />
+                <div className="bg-teal-400 h-1.5 rounded-full" style={{ width: hasVitals ? '100%' : '0%' }} />
               </div>
 
               <div className="flex justify-between items-center text-slate-300 pt-1">
-                <span>Profile Completeness</span>
-                <span className="font-bold text-cyan-300">85%</span>
+                <span>Profile Status</span>
+                <span className="font-bold text-cyan-300">Active</span>
               </div>
               <div className="w-full bg-slate-800 rounded-full h-1.5 overflow-hidden">
-                <div className="bg-cyan-400 h-1.5 rounded-full" style={{ width: '85%' }} />
-              </div>
-
-              <div className="flex justify-between items-center text-slate-300 pt-1">
-                <span>Check-in Recency</span>
-                <span className="font-bold text-emerald-300">88%</span>
-              </div>
-              <div className="w-full bg-slate-800 rounded-full h-1.5 overflow-hidden">
-                <div className="bg-emerald-400 h-1.5 rounded-full" style={{ width: '88%' }} />
+                <div className="bg-cyan-400 h-1.5 rounded-full" style={{ width: '100%' }} />
               </div>
             </div>
           </div>
 
           <div className="pt-4 border-t border-slate-800/80 text-[11px] text-slate-400 flex items-center justify-between">
-            <span>Last calculated: Just now</span>
+            <span>{hasVitals ? 'Last calculated: Recent' : 'Log vitals to begin tracking'}</span>
             <button onClick={() => onNavigate('vitals')} className="text-teal-400 hover:underline flex items-center gap-1">
-              Details <ChevronRight className="w-3 h-3" />
+              {hasVitals ? 'Details' : 'Record Now'} <ChevronRight className="w-3 h-3" />
             </button>
           </div>
         </div>
@@ -1040,17 +964,19 @@ function OverviewSection({
             <div className="my-3">
               <div className="flex items-baseline gap-1.5">
                 <span className="text-2xl sm:text-3xl font-extrabold text-white">
-                  {latestVitals?.heart_rate ?? 74}
+                  {latestVitals?.heart_rate ? latestVitals.heart_rate : '--'}
                 </span>
-                <span className="text-xs text-slate-400 font-medium">bpm</span>
+                {latestVitals?.heart_rate && <span className="text-xs text-slate-400 font-medium">bpm</span>}
               </div>
-              <span className="inline-block mt-1 text-[11px] text-emerald-400 font-medium">
-                ● Normal resting rhythm
+              <span className="inline-block mt-1 text-[11px] text-slate-400 font-medium">
+                {latestVitals?.heart_rate ? '● Recorded resting rhythm' : 'No vitals logged yet'}
               </span>
             </div>
             <div className="text-[11px] text-slate-500 flex items-center justify-between pt-2 border-t border-slate-800/60">
               <span>Target: 60 - 100</span>
-              <span className="text-teal-400 font-medium">Stable</span>
+              <button onClick={() => onNavigate('vitals')} className="text-teal-400 font-medium hover:underline">
+                {latestVitals?.heart_rate ? 'Update' : '+ Add'}
+              </button>
             </div>
           </div>
 
@@ -1067,17 +993,19 @@ function OverviewSection({
                 <span className="text-2xl sm:text-3xl font-extrabold text-white">
                   {latestVitals?.systolic_bp && latestVitals?.diastolic_bp
                     ? `${latestVitals.systolic_bp}/${latestVitals.diastolic_bp}`
-                    : '120/80'}
+                    : '--/--'}
                 </span>
-                <span className="text-xs text-slate-400 font-medium">mmHg</span>
+                {latestVitals?.systolic_bp && <span className="text-xs text-slate-400 font-medium">mmHg</span>}
               </div>
-              <span className="inline-block mt-1 text-[11px] text-teal-400 font-medium">
-                ● Ideal systolic/diastolic
+              <span className="inline-block mt-1 text-[11px] text-slate-400 font-medium">
+                {latestVitals?.systolic_bp ? '● Systolic / Diastolic' : 'No vitals logged yet'}
               </span>
             </div>
             <div className="text-[11px] text-slate-500 flex items-center justify-between pt-2 border-t border-slate-800/60">
               <span>Target: &lt;120/80</span>
-              <span className="text-teal-400 font-medium">Optimal</span>
+              <button onClick={() => onNavigate('vitals')} className="text-teal-400 font-medium hover:underline">
+                {latestVitals?.systolic_bp ? 'Update' : '+ Add'}
+              </button>
             </div>
           </div>
 
@@ -1092,17 +1020,18 @@ function OverviewSection({
             <div className="my-3">
               <div className="flex items-baseline gap-1.5">
                 <span className="text-2xl sm:text-3xl font-extrabold text-white">
-                  {latestVitals?.oxygen_saturation ?? 98}
+                  {latestVitals?.oxygen_saturation ? `${latestVitals.oxygen_saturation}%` : '--'}
                 </span>
-                <span className="text-xs text-slate-400 font-medium">%</span>
               </div>
-              <span className="inline-block mt-1 text-[11px] text-cyan-400 font-medium">
-                ● Healthy pulmonary saturation
+              <span className="inline-block mt-1 text-[11px] text-slate-400 font-medium">
+                {latestVitals?.oxygen_saturation ? '● Oxygen saturation' : 'No vitals logged yet'}
               </span>
             </div>
             <div className="text-[11px] text-slate-500 flex items-center justify-between pt-2 border-t border-slate-800/60">
               <span>Target: 95 - 100%</span>
-              <span className="text-cyan-400 font-medium">Normal</span>
+              <button onClick={() => onNavigate('vitals')} className="text-teal-400 font-medium hover:underline">
+                {latestVitals?.oxygen_saturation ? 'Update' : '+ Add'}
+              </button>
             </div>
           </div>
 
@@ -1117,17 +1046,18 @@ function OverviewSection({
             <div className="my-3">
               <div className="flex items-baseline gap-1.5">
                 <span className="text-2xl sm:text-3xl font-extrabold text-white">
-                  {latestVitals?.temperature ?? 36.8}
+                  {latestVitals?.temperature ? `${latestVitals.temperature}°C` : '--'}
                 </span>
-                <span className="text-xs text-slate-400 font-medium">°C</span>
               </div>
-              <span className="inline-block mt-1 text-[11px] text-amber-400 font-medium">
-                ● Afebrile / Normal
+              <span className="inline-block mt-1 text-[11px] text-slate-400 font-medium">
+                {latestVitals?.temperature ? '● Body temperature' : 'No vitals logged yet'}
               </span>
             </div>
             <div className="text-[11px] text-slate-500 flex items-center justify-between pt-2 border-t border-slate-800/60">
               <span>Target: 36.5 - 37.5°C</span>
-              <span className="text-teal-400 font-medium">Normal</span>
+              <button onClick={() => onNavigate('vitals')} className="text-teal-400 font-medium hover:underline">
+                {latestVitals?.temperature ? 'Update' : '+ Add'}
+              </button>
             </div>
           </div>
         </div>
@@ -1142,44 +1072,30 @@ function OverviewSection({
               <Calendar className="w-5 h-5 text-teal-400" />
               <h3 className="font-bold text-white text-base">Next Medical Appointment</h3>
             </div>
-            <span className="px-2.5 py-1 rounded-full bg-cyan-500/20 text-cyan-300 text-xs font-semibold border border-cyan-500/30">
-              Confirmed
+            <span className="px-2.5 py-1 rounded-full bg-slate-800 text-slate-400 text-xs font-semibold border border-slate-700">
+              Schedule
             </span>
           </div>
 
-          <div className="p-4 rounded-2xl bg-white/5 border border-white/10 flex items-start gap-4">
-            <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-teal-500 to-cyan-500 flex items-center justify-center text-slate-950 font-bold text-base flex-shrink-0">
-              SC
-            </div>
-            <div className="flex-1 min-w-0">
-              <h4 className="text-sm font-bold text-white truncate">Dr. Sarah Chen, MD</h4>
-              <p className="text-xs text-teal-400 font-medium">Cardiology & Preventive Health</p>
-              <div className="flex flex-wrap items-center gap-3 mt-2 text-xs text-slate-300">
-                <span className="flex items-center gap-1">
-                  <Clock className="w-3.5 h-3.5 text-slate-400" /> Tomorrow, 10:00 AM
-                </span>
-                <span className="flex items-center gap-1 text-cyan-300 font-medium">
-                  ● Virtual Video Consultation
-                </span>
-              </div>
-            </div>
+          <div className="p-6 rounded-2xl bg-white/5 border border-white/10 text-center space-y-2">
+            <Calendar className="w-8 h-8 text-slate-500 mx-auto" />
+            <h4 className="text-sm font-bold text-white">No Upcoming Consultations</h4>
+            <p className="text-xs text-slate-400 max-w-xs mx-auto">
+              You do not have any scheduled appointments with a physician or clinic.
+            </p>
           </div>
 
           <div className="pt-4 mt-4 border-t border-slate-800/80 flex items-center justify-between">
-            <button
-              onClick={() => onNavigate('messages')}
-              className="text-xs text-slate-400 hover:text-slate-200 transition"
-            >
-              Message Doctor
-            </button>
+            <span className="text-xs text-slate-500">Need medical care?</span>
             <button
               onClick={() => onNavigate('appointments')}
               className="px-4 py-2 rounded-xl bg-teal-500 hover:bg-teal-400 text-slate-950 font-bold text-xs shadow-md transition"
             >
-              View Appointment Details
+              Book Consultation
             </button>
           </div>
         </div>
+
 
         {/* Recent Symptoms Summary */}
         <div className="rounded-3xl bg-slate-900/60 border border-slate-800/80 p-6 backdrop-blur-xl flex flex-col justify-between">
@@ -1258,99 +1174,25 @@ function RecordsSection({ onShowToast }: { onShowToast: (t: string, d?: string) 
   const [tab, setTab] = useState<'consultations' | 'prescriptions' | 'labs'>('consultations');
   const [searchQuery, setSearchQuery] = useState('');
 
-  const consultationRecords: MedicalRecord[] = [
-    {
-      id: 'rec-1',
-      date: '2026-03-24',
-      doctorName: 'Dr. Sarah Chen, MD',
-      institution: 'St. Jude General Hospital',
-      specialty: 'Cardiovascular Health',
-      diagnosis: 'Sinus Tachycardia Secondary to Occupational Stress & Dehydration',
-      notes: 'Patient presented with intermittent palpitations during stressful deadlines. EKG baseline shows normal sinus rhythm. Electrolytes balanced. Advised adequate hydration and mindfulness meditation. Follow-up in 4 weeks.',
-      prescriptionSummary: 'Magnesium Glycinate 200mg nightly, Oral Rehydration salts PRN',
-      type: 'consultation',
-    },
-    {
-      id: 'rec-2',
-      date: '2026-01-12',
-      doctorName: 'Dr. Marcus Vance, MD',
-      institution: 'NeuroCare Institute',
-      specialty: 'Neurology',
-      diagnosis: 'Episodic Tension Headache with Cervicogenic Component',
-      notes: 'Neurological exam cranial nerves II-XII intact. Fundoscopy normal. Ergonomic posture evaluation recommended. Screen blue-light reduction filters suggested.',
-      prescriptionSummary: 'Naproxen Sodium 220mg PRN for headache episodes',
-      type: 'consultation',
-    },
-  ];
+  const [consultationRecords, setConsultationRecords] = useState<MedicalRecord[]>([]);
+  const [prescriptions, setPrescriptions] = useState<PrescriptionItem[]>([]);
+  const [labResults, setLabResults] = useState<LabResultItem[]>([]);
 
-  const prescriptions: PrescriptionItem[] = [
-    {
-      id: 'rx-1',
-      medication: 'Magnesium Glycinate',
-      dosage: '200 mg',
-      frequency: 'Once daily at bedtime',
-      duration: '30 Days',
-      doctor: 'Dr. Sarah Chen, MD',
-      datePrescribed: '2026-03-24',
-      status: 'Active',
-      refillsLeft: 2,
-    },
-    {
-      id: 'rx-2',
-      medication: 'Naproxen Sodium',
-      dosage: '220 mg',
-      frequency: 'As needed for headache (PRN)',
-      duration: '14 Days',
-      doctor: 'Dr. Marcus Vance, MD',
-      datePrescribed: '2026-01-12',
-      status: 'Completed',
-      refillsLeft: 0,
-    },
-    {
-      id: 'rx-3',
-      medication: 'Vitamin D3 (Cholecalciferol)',
-      dosage: '2,000 IU',
-      frequency: 'Once daily with breakfast',
-      duration: '90 Days',
-      doctor: 'Dr. Elena Rostova, MD',
-      datePrescribed: '2025-11-05',
-      status: 'Active',
-      refillsLeft: 1,
-    },
-  ];
+  const filteredConsultations = consultationRecords.filter(r =>
+    r.doctorName.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    r.diagnosis.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    r.specialty.toLowerCase().includes(searchQuery.toLowerCase())
+  );
 
-  const labResults: LabResultItem[] = [
-    {
-      id: 'lab-1',
-      testName: 'Comprehensive Metabolic Panel (CMP)',
-      category: 'Blood Chemistry',
-      date: '2026-03-20',
-      labName: 'Metro Diagnostic Laboratories',
-      resultValue: 'Normal (All 14 parameters)',
-      referenceRange: 'Standard adult physiological',
-      status: 'Normal',
-    },
-    {
-      id: 'lab-2',
-      testName: 'Lipid Panel with Total Cholesterol / HDL Ratio',
-      category: 'Cardiovascular Risk',
-      date: '2026-02-14',
-      labName: 'Quest Diagnostics Regional',
-      resultValue: 'Total: 182 mg/dL | HDL: 58 | LDL: 104',
-      referenceRange: 'LDL < 100 mg/dL optimal',
-      status: 'Attention',
-    },
-    {
-      id: 'lab-3',
-      testName: 'Hemoglobin A1c (HbA1c)',
-      category: 'Endocrinology',
-      date: '2026-01-18',
-      labName: 'Metro Diagnostic Laboratories',
-      resultValue: '5.3%',
-      referenceRange: '< 5.7% (Non-diabetic)',
-      status: 'Normal',
-    },
-  ];
+  const filteredPrescriptions = prescriptions.filter(p =>
+    p.medication.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    p.doctor.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+
+  const filteredLabs = labResults.filter(l =>
+    l.testName.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    l.category.toLowerCase().includes(searchQuery.toLowerCase())
+  );
 
   return (
     <div className="space-y-6">
@@ -1407,152 +1249,182 @@ function RecordsSection({ onShowToast }: { onShowToast: (t: string, d?: string) 
       {/* Tab 1: Consultations */}
       {tab === 'consultations' && (
         <div className="space-y-4">
-          {consultationRecords.map(rec => (
-            <div
-              key={rec.id}
-              className="rounded-3xl bg-slate-900/60 border border-slate-800/80 p-6 backdrop-blur-xl space-y-4"
-            >
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800 pb-4">
-                <div>
-                  <div className="flex items-center gap-2">
-                    <span className="font-bold text-white text-base">{rec.doctorName}</span>
-                    <span className="text-xs text-teal-400 font-medium">({rec.specialty})</span>
+          {filteredConsultations.length > 0 ? (
+            filteredConsultations.map(rec => (
+              <div
+                key={rec.id}
+                className="rounded-3xl bg-slate-900/60 border border-slate-800/80 p-6 backdrop-blur-xl space-y-4"
+              >
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800 pb-4">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="font-bold text-white text-base">{rec.doctorName}</span>
+                      <span className="text-xs text-teal-400 font-medium">({rec.specialty})</span>
+                    </div>
+                    <p className="text-xs text-slate-400 mt-0.5">{rec.institution}</p>
                   </div>
-                  <p className="text-xs text-slate-400 mt-0.5">{rec.institution}</p>
+                  <div className="flex items-center gap-3">
+                    <span className="text-xs text-slate-400 font-mono">{rec.date}</span>
+                    <button
+                      onClick={() => onShowToast('Exporting EMR', `Downloading encrypted record summary for ${rec.id}`)}
+                      className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 transition"
+                      title="Export Record"
+                    >
+                      <Download className="w-4 h-4" />
+                    </button>
+                  </div>
                 </div>
-                <div className="flex items-center gap-3">
-                  <span className="text-xs text-slate-400 font-mono">{rec.date}</span>
-                  <button
-                    onClick={() => onShowToast('Exporting EMR', `Downloading encrypted record summary for ${rec.id}`)}
-                    className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 transition"
-                    title="Export Record"
-                  >
-                    <Download className="w-4 h-4" />
-                  </button>
-                </div>
-              </div>
 
-              <div>
-                <h4 className="text-xs uppercase tracking-wider font-semibold text-slate-400">Diagnosis</h4>
-                <p className="text-sm font-semibold text-teal-300 mt-1">{rec.diagnosis}</p>
-              </div>
-
-              <div>
-                <h4 className="text-xs uppercase tracking-wider font-semibold text-slate-400">Clinical Notes</h4>
-                <p className="text-xs text-slate-300 mt-1 leading-relaxed bg-slate-950/40 p-3.5 rounded-xl border border-slate-800/60">
-                  {rec.notes}
-                </p>
-              </div>
-
-              {rec.prescriptionSummary && (
                 <div>
-                  <h4 className="text-xs uppercase tracking-wider font-semibold text-slate-400">Prescribed Therapy</h4>
-                  <p className="text-xs font-mono text-cyan-300 mt-1">{rec.prescriptionSummary}</p>
+                  <h4 className="text-xs uppercase tracking-wider font-semibold text-slate-400">Diagnosis</h4>
+                  <p className="text-sm font-semibold text-teal-300 mt-1">{rec.diagnosis}</p>
                 </div>
-              )}
+
+                <div>
+                  <h4 className="text-xs uppercase tracking-wider font-semibold text-slate-400">Clinical Notes</h4>
+                  <p className="text-xs text-slate-300 mt-1 leading-relaxed bg-slate-950/40 p-3.5 rounded-xl border border-slate-800/60">
+                    {rec.notes}
+                  </p>
+                </div>
+
+                {rec.prescriptionSummary && (
+                  <div>
+                    <h4 className="text-xs uppercase tracking-wider font-semibold text-slate-400">Prescribed Therapy</h4>
+                    <p className="text-xs font-mono text-cyan-300 mt-1">{rec.prescriptionSummary}</p>
+                  </div>
+                )}
+              </div>
+            ))
+          ) : (
+            <div className="p-12 rounded-3xl bg-slate-900/40 border border-slate-800/80 text-center space-y-3">
+              <FileText className="w-10 h-10 text-slate-600 mx-auto" />
+              <h4 className="text-base font-semibold text-slate-200">No Consultation Records</h4>
+              <p className="text-xs text-slate-400 max-w-sm mx-auto">
+                Official clinical records from certified doctors and healthcare facilities will appear here following your consultations.
+              </p>
             </div>
-          ))}
+          )}
         </div>
       )}
 
       {/* Tab 2: Prescriptions */}
       {tab === 'prescriptions' && (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {prescriptions.map(item => (
-            <div
-              key={item.id}
-              className="rounded-3xl bg-slate-900/60 border border-slate-800/80 p-5 backdrop-blur-xl flex flex-col justify-between space-y-4"
-            >
-              <div className="flex items-start justify-between">
-                <div>
-                  <h4 className="text-base font-bold text-white">{item.medication}</h4>
-                  <p className="text-xs font-semibold text-teal-400 mt-0.5">{item.dosage} • {item.frequency}</p>
-                </div>
-                <span
-                  className={cn(
-                    'text-[10px] px-2.5 py-1 rounded-full font-bold uppercase',
-                    item.status === 'Active'
-                      ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
-                      : 'bg-slate-800 text-slate-400 border border-slate-700'
-                  )}
-                >
-                  {item.status}
-                </span>
-              </div>
-
-              <div className="space-y-1 text-xs text-slate-400 bg-slate-950/40 p-3 rounded-xl border border-slate-800/60">
-                <div className="flex justify-between">
-                  <span>Prescribed By:</span>
-                  <span className="text-slate-200">{item.doctor}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span>Duration:</span>
-                  <span className="text-slate-200">{item.duration}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span>Refills Available:</span>
-                  <span className="text-teal-400 font-semibold">{item.refillsLeft} refills</span>
-                </div>
-              </div>
-
-              <div className="flex items-center justify-between pt-2">
-                <span className="text-[11px] text-slate-500 font-mono">Issued: {item.datePrescribed}</span>
-                {item.status === 'Active' && (
-                  <button
-                    onClick={() => onShowToast('Refill Requested', `Request sent to pharmacy for ${item.medication}`)}
-                    className="px-3 py-1.5 rounded-xl bg-teal-500/20 hover:bg-teal-500/30 text-teal-300 border border-teal-500/30 text-xs font-semibold transition"
+          {filteredPrescriptions.length > 0 ? (
+            filteredPrescriptions.map(item => (
+              <div
+                key={item.id}
+                className="rounded-3xl bg-slate-900/60 border border-slate-800/80 p-5 backdrop-blur-xl flex flex-col justify-between space-y-4"
+              >
+                <div className="flex items-start justify-between">
+                  <div>
+                    <h4 className="text-base font-bold text-white">{item.medication}</h4>
+                    <p className="text-xs font-semibold text-teal-400 mt-0.5">{item.dosage} • {item.frequency}</p>
+                  </div>
+                  <span
+                    className={cn(
+                      'text-[10px] px-2.5 py-1 rounded-full font-bold uppercase',
+                      item.status === 'Active'
+                        ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                        : 'bg-slate-800 text-slate-400 border border-slate-700'
+                    )}
                   >
-                    Request Refill
-                  </button>
-                )}
+                    {item.status}
+                  </span>
+                </div>
+
+                <div className="space-y-1 text-xs text-slate-400 bg-slate-950/40 p-3 rounded-xl border border-slate-800/60">
+                  <div className="flex justify-between">
+                    <span>Prescribed By:</span>
+                    <span className="text-slate-200">{item.doctor}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Duration:</span>
+                    <span className="text-slate-200">{item.duration}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Refills Available:</span>
+                    <span className="text-teal-400 font-semibold">{item.refillsLeft} refills</span>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between pt-2">
+                  <span className="text-[11px] text-slate-500 font-mono">Issued: {item.datePrescribed}</span>
+                  {item.status === 'Active' && (
+                    <button
+                      onClick={() => onShowToast('Refill Requested', `Request sent to pharmacy for ${item.medication}`)}
+                      className="px-3 py-1.5 rounded-xl bg-teal-500/20 hover:bg-teal-500/30 text-teal-300 border border-teal-500/30 text-xs font-semibold transition"
+                    >
+                      Request Refill
+                    </button>
+                  )}
+                </div>
               </div>
+            ))
+          ) : (
+            <div className="col-span-full p-12 rounded-3xl bg-slate-900/40 border border-slate-800/80 text-center space-y-3">
+              <FileText className="w-10 h-10 text-slate-600 mx-auto" />
+              <h4 className="text-base font-semibold text-slate-200">No Prescriptions On File</h4>
+              <p className="text-xs text-slate-400 max-w-sm mx-auto">
+                Electronic prescriptions generated by attending physicians will be archived here for easy refill management.
+              </p>
             </div>
-          ))}
+          )}
         </div>
       )}
 
       {/* Tab 3: Lab Results */}
       {tab === 'labs' && (
         <div className="space-y-4">
-          {labResults.map(lab => (
-            <div
-              key={lab.id}
-              className="rounded-3xl bg-slate-900/60 border border-slate-800/80 p-5 backdrop-blur-xl flex flex-col md:flex-row md:items-center justify-between gap-4"
-            >
-              <div className="space-y-1">
-                <div className="flex items-center gap-2">
-                  <h4 className="text-sm font-bold text-white">{lab.testName}</h4>
-                  <span
-                    className={cn(
-                      'text-[10px] px-2 py-0.5 rounded-full font-bold uppercase',
-                      lab.status === 'Normal'
-                        ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
-                        : 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
-                    )}
-                  >
-                    {lab.status}
-                  </span>
+          {filteredLabs.length > 0 ? (
+            filteredLabs.map(lab => (
+              <div
+                key={lab.id}
+                className="rounded-3xl bg-slate-900/60 border border-slate-800/80 p-5 backdrop-blur-xl flex flex-col md:flex-row md:items-center justify-between gap-4"
+              >
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <h4 className="text-sm font-bold text-white">{lab.testName}</h4>
+                    <span
+                      className={cn(
+                        'text-[10px] px-2 py-0.5 rounded-full font-bold uppercase',
+                        lab.status === 'Normal'
+                          ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                          : 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                      )}
+                    >
+                      {lab.status}
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-400">
+                    {lab.labName} • Category: {lab.category}
+                  </p>
+                  <div className="text-xs pt-1">
+                    <span className="text-teal-300 font-semibold">{lab.resultValue}</span>
+                    <span className="text-slate-500 ml-2">({lab.referenceRange})</span>
+                  </div>
                 </div>
-                <p className="text-xs text-slate-400">
-                  {lab.labName} • Category: {lab.category}
-                </p>
-                <div className="text-xs pt-1">
-                  <span className="text-teal-300 font-semibold">{lab.resultValue}</span>
-                  <span className="text-slate-500 ml-2">({lab.referenceRange})</span>
-                </div>
-              </div>
 
-              <div className="flex items-center gap-3">
-                <span className="text-xs font-mono text-slate-500">{lab.date}</span>
-                <button
-                  onClick={() => onShowToast('Lab Report', `Opening official PDF report for ${lab.testName}`)}
-                  className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-semibold transition flex items-center gap-1.5"
-                >
-                  <Eye className="w-3.5 h-3.5" /> View PDF
-                </button>
+                <div className="flex items-center gap-3">
+                  <span className="text-xs font-mono text-slate-500">{lab.date}</span>
+                  <button
+                    onClick={() => onShowToast('Lab Report', `Opening official PDF report for ${lab.testName}`)}
+                    className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-semibold transition flex items-center gap-1.5"
+                  >
+                    <Eye className="w-3.5 h-3.5" /> View PDF
+                  </button>
+                </div>
               </div>
+            ))
+          ) : (
+            <div className="p-12 rounded-3xl bg-slate-900/40 border border-slate-800/80 text-center space-y-3">
+              <FileText className="w-10 h-10 text-slate-600 mx-auto" />
+              <h4 className="text-base font-semibold text-slate-200">No Diagnostic Laboratory Reports</h4>
+              <p className="text-xs text-slate-400 max-w-sm mx-auto">
+                Blood tests, urinalysis, pathology, and radiology reports delivered by diagnostic centers will appear here.
+              </p>
             </div>
-          ))}
+          )}
         </div>
       )}
     </div>
@@ -1874,14 +1746,14 @@ function VitalsSection({
   onVitalsSaved,
   onShowToast,
 }: VitalsSectionProps) {
-  const [heartRate, setHeartRate] = useState(latestVitals?.heart_rate?.toString() || '72');
-  const [systolic, setSystolic] = useState(latestVitals?.systolic_bp?.toString() || '120');
-  const [diastolic, setDiastolic] = useState(latestVitals?.diastolic_bp?.toString() || '80');
-  const [o2Sat, setO2Sat] = useState(latestVitals?.oxygen_saturation?.toString() || '98');
-  const [temp, setTemp] = useState(latestVitals?.temperature?.toString() || '36.8');
-  const [weight, setWeight] = useState(latestVitals?.weight_kg?.toString() || '71');
-  const [height, setHeight] = useState(latestVitals?.height_cm?.toString() || '175');
-  const [bloodGlucose, setBloodGlucose] = useState(latestVitals?.blood_glucose?.toString() || '95');
+  const [heartRate, setHeartRate] = useState(latestVitals?.heart_rate?.toString() || '');
+  const [systolic, setSystolic] = useState(latestVitals?.systolic_bp?.toString() || '');
+  const [diastolic, setDiastolic] = useState(latestVitals?.diastolic_bp?.toString() || '');
+  const [o2Sat, setO2Sat] = useState(latestVitals?.oxygen_saturation?.toString() || '');
+  const [temp, setTemp] = useState(latestVitals?.temperature?.toString() || '');
+  const [weight, setWeight] = useState(latestVitals?.weight_kg?.toString() || '');
+  const [height, setHeight] = useState(latestVitals?.height_cm?.toString() || '');
+  const [bloodGlucose, setBloodGlucose] = useState(latestVitals?.blood_glucose?.toString() || '');
   const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);
 
@@ -2179,28 +2051,7 @@ function AppointmentsSection({
   const [consultType, setConsultType] = useState<'Video Consultation' | 'In-Person Clinic Visit' | 'Audio Call'>('Video Consultation');
   const [reason, setReason] = useState('');
 
-  const [appointments, setAppointments] = useState<Appointment[]>([
-    {
-      id: 'apt-1',
-      doctorName: 'Dr. Sarah Chen, MD',
-      specialty: 'Cardiologist',
-      date: '2026-03-25',
-      time: '10:00 AM',
-      type: 'Video Consultation',
-      status: 'upcoming',
-      reason: 'Follow-up on sinus tachycardia and vital trends',
-    },
-    {
-      id: 'apt-2',
-      doctorName: 'Dr. Marcus Vance, MD',
-      specialty: 'Neurologist',
-      date: '2026-02-10',
-      time: '02:30 PM',
-      type: 'In-Person Clinic Visit',
-      status: 'completed',
-      reason: 'Migraine and cervical strain consultation',
-    },
-  ]);
+  const [appointments, setAppointments] = useState<Appointment[]>([]);
 
   const handleBook = (e: React.FormEvent) => {
     e.preventDefault();
@@ -2242,7 +2093,7 @@ function AppointmentsSection({
               tab === 'upcoming' ? 'bg-teal-500 text-slate-950 shadow' : 'text-slate-400 hover:text-white'
             )}
           >
-            Upcoming (1)
+            Upcoming ({appointments.filter(a => a.status === 'upcoming').length})
           </button>
           <button
             onClick={() => setTab('past')}
@@ -2380,59 +2231,81 @@ function AppointmentsSection({
       {/* Upcoming / Past Lists */}
       {tab !== 'book' && (
         <div className="space-y-4">
-          {appointments
-            .filter(a => (tab === 'upcoming' ? a.status === 'upcoming' : a.status !== 'upcoming'))
-            .map(apt => (
-              <div
-                key={apt.id}
-                className="rounded-3xl bg-slate-900/60 border border-slate-800/80 p-6 backdrop-blur-xl flex flex-col md:flex-row md:items-center justify-between gap-6"
-              >
-                <div className="flex items-start gap-4">
-                  <div className="w-12 h-12 rounded-2xl bg-teal-500/20 border border-teal-500/30 text-teal-300 font-bold flex items-center justify-center flex-shrink-0">
-                    <Stethoscope className="w-6 h-6" />
-                  </div>
-                  <div className="space-y-1">
-                    <div className="flex items-center gap-2">
-                      <h4 className="text-base font-bold text-white">{apt.doctorName}</h4>
-                      <span className="text-xs text-teal-400">({apt.specialty})</span>
+          {appointments.filter(a => (tab === 'upcoming' ? a.status === 'upcoming' : a.status !== 'upcoming')).length > 0 ? (
+            appointments
+              .filter(a => (tab === 'upcoming' ? a.status === 'upcoming' : a.status !== 'upcoming'))
+              .map(apt => (
+                <div
+                  key={apt.id}
+                  className="rounded-3xl bg-slate-900/60 border border-slate-800/80 p-6 backdrop-blur-xl flex flex-col md:flex-row md:items-center justify-between gap-6"
+                >
+                  <div className="flex items-start gap-4">
+                    <div className="w-12 h-12 rounded-2xl bg-teal-500/20 border border-teal-500/30 text-teal-300 font-bold flex items-center justify-center flex-shrink-0">
+                      <Stethoscope className="w-6 h-6" />
                     </div>
-                    <p className="text-xs text-slate-300">{apt.reason}</p>
-                    <div className="flex flex-wrap items-center gap-3 pt-1 text-xs text-slate-400">
-                      <span className="font-mono text-cyan-300">
-                        {apt.date} at {apt.time}
-                      </span>
-                      <span>• {apt.type}</span>
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2">
+                        <h4 className="text-base font-bold text-white">{apt.doctorName}</h4>
+                        <span className="text-xs text-teal-400">({apt.specialty})</span>
+                      </div>
+                      <p className="text-xs text-slate-300">{apt.reason}</p>
+                      <div className="flex flex-wrap items-center gap-3 pt-1 text-xs text-slate-400">
+                        <span className="font-mono text-cyan-300">
+                          {apt.date} at {apt.time}
+                        </span>
+                        <span>• {apt.type}</span>
+                      </div>
                     </div>
                   </div>
-                </div>
 
-                <div className="flex items-center gap-3">
-                  {apt.status === 'upcoming' ? (
-                    <>
+                  <div className="flex items-center gap-3">
+                    {apt.status === 'upcoming' ? (
+                      <>
+                        <button
+                          onClick={() => onNavigate('messages')}
+                          className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-semibold transition"
+                        >
+                          Message
+                        </button>
+                        <button
+                          onClick={() => onShowToast('Telehealth Room', 'Connecting to secure HD video consultation server...')}
+                          className="px-4 py-2 rounded-xl bg-teal-500 hover:bg-teal-400 text-slate-950 font-bold text-xs shadow-md shadow-teal-500/20 transition flex items-center gap-1.5"
+                        >
+                          Join Room
+                        </button>
+                      </>
+                    ) : (
                       <button
-                        onClick={() => onNavigate('messages')}
-                        className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-semibold transition"
+                        onClick={() => onNavigate('records')}
+                        className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-semibold transition"
                       >
-                        Message
+                        View Clinical Summary
                       </button>
-                      <button
-                        onClick={() => onShowToast('Telehealth Room', 'Connecting to secure HD video consultation server...')}
-                        className="px-4 py-2 rounded-xl bg-teal-500 hover:bg-teal-400 text-slate-950 font-bold text-xs shadow-md shadow-teal-500/20 transition flex items-center gap-1.5"
-                      >
-                        Join Room
-                      </button>
-                    </>
-                  ) : (
-                    <button
-                      onClick={() => onNavigate('records')}
-                      className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-semibold transition"
-                    >
-                      View Clinical Summary
-                    </button>
-                  )}
+                    )}
+                  </div>
                 </div>
-              </div>
-            ))}
+              ))
+          ) : (
+            <div className="p-12 rounded-3xl bg-slate-900/40 border border-slate-800/80 text-center space-y-3">
+              <Calendar className="w-10 h-10 text-slate-600 mx-auto" />
+              <h4 className="text-base font-semibold text-slate-200">
+                {tab === 'upcoming' ? 'No Upcoming Consultations' : 'No Past Consultations'}
+              </h4>
+              <p className="text-xs text-slate-400 max-w-sm mx-auto">
+                {tab === 'upcoming'
+                  ? 'You currently have no scheduled appointments. Click "Book New" to schedule a consultation with a specialist.'
+                  : 'Past consultation notes, diagnoses, and referrals will appear here once visits conclude.'}
+              </p>
+              {tab === 'upcoming' && (
+                <button
+                  onClick={() => setTab('book')}
+                  className="mt-2 inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-teal-500 hover:bg-teal-400 text-slate-950 font-bold text-xs shadow-md transition"
+                >
+                  <Plus className="w-3.5 h-3.5" /> Book Consultation Now
+                </button>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -2450,73 +2323,15 @@ interface MessagesSectionProps {
 }
 
 function MessagesSection({ doctorsList, patientName, onShowToast }: MessagesSectionProps) {
-  const [conversations, setConversations] = useState<Conversation[]>([
-    {
-      doctorId: 'doc-1',
-      doctorName: 'Dr. Sarah Chen, MD',
-      specialty: 'Cardiologist',
-      avatar: 'SC',
-      online: true,
-      lastMessage: 'Good evening Sarah, please remember to log your resting heart rate tomorrow morning.',
-      lastTime: '18:45',
-      unreadCount: 1,
-      messages: [
-        {
-          id: 'm1',
-          senderId: 'doc-1',
-          senderName: 'Dr. Sarah Chen, MD',
-          senderRole: 'doctor',
-          text: 'Hello Sarah, I reviewed your recent vital logs. Your blood pressure has improved to 120/80.',
-          timestamp: '18:30',
-        },
-        {
-          id: 'm2',
-          senderId: 'patient-1',
-          senderName: patientName,
-          senderRole: 'patient',
-          text: 'Thank you doctor! The magnesium glycinate seems to have helped my sleep quality as well.',
-          timestamp: '18:35',
-        },
-        {
-          id: 'm3',
-          senderId: 'doc-1',
-          senderName: 'Dr. Sarah Chen, MD',
-          senderRole: 'doctor',
-          text: 'Good evening Sarah, please remember to log your resting heart rate tomorrow morning.',
-          timestamp: '18:45',
-        },
-      ],
-    },
-    {
-      doctorId: 'doc-2',
-      doctorName: 'Dr. Marcus Vance, MD',
-      specialty: 'Neurologist',
-      avatar: 'MV',
-      online: false,
-      lastMessage: 'Your prescription renewal has been authorized and dispatched to your pharmacy.',
-      lastTime: 'Yesterday',
-      unreadCount: 0,
-      messages: [
-        {
-          id: 'm4',
-          senderId: 'doc-2',
-          senderName: 'Dr. Marcus Vance, MD',
-          senderRole: 'doctor',
-          text: 'Your prescription renewal has been authorized and dispatched to your pharmacy.',
-          timestamp: 'Yesterday 14:10',
-        },
-      ],
-    },
-  ]);
-
-  const [activeDoctorId, setActiveDoctorId] = useState<string>('doc-1');
+  const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [activeDoctorId, setActiveDoctorId] = useState<string>('');
   const [inputText, setInputText] = useState('');
 
   const activeConv = conversations.find(c => c.doctorId === activeDoctorId) || conversations[0];
 
   const handleSendMessage = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!inputText.trim()) return;
+    if (!inputText.trim() || !activeConv) return;
 
     const newMsg: MessageItem = {
       id: `m-${Date.now()}`,
@@ -2529,7 +2344,7 @@ function MessagesSection({ doctorsList, patientName, onShowToast }: MessagesSect
 
     setConversations(prev =>
       prev.map(c => {
-        if (c.doctorId === activeDoctorId) {
+        if (c.doctorId === activeConv.doctorId) {
           return {
             ...c,
             lastMessage: newMsg.text,
@@ -2541,31 +2356,6 @@ function MessagesSection({ doctorsList, patientName, onShowToast }: MessagesSect
       })
     );
     setInputText('');
-
-    // Simulate doctor reply after 1.5s
-    setTimeout(() => {
-      const docReply: MessageItem = {
-        id: `m-reply-${Date.now()}`,
-        senderId: activeDoctorId,
-        senderName: activeConv.doctorName,
-        senderRole: 'doctor',
-        text: 'Thank you for the update. I have updated your chart accordingly.',
-        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      };
-      setConversations(prev =>
-        prev.map(c => {
-          if (c.doctorId === activeDoctorId) {
-            return {
-              ...c,
-              lastMessage: docReply.text,
-              lastTime: docReply.timestamp,
-              messages: [...c.messages, docReply],
-            };
-          }
-          return c;
-        })
-      );
-    }, 1500);
   };
 
   return (
@@ -2574,106 +2364,127 @@ function MessagesSection({ doctorsList, patientName, onShowToast }: MessagesSect
       <div className="w-full md:w-80 border-r border-slate-800 flex flex-col">
         <div className="p-4 border-b border-slate-800 flex items-center justify-between">
           <h3 className="font-bold text-white text-sm">Direct Messages</h3>
-          <span className="text-[11px] text-teal-400 font-semibold">2 Doctors Active</span>
+          <span className="text-[11px] text-slate-500 font-semibold">{conversations.length} Active</span>
         </div>
 
         <div className="flex-1 overflow-y-auto divide-y divide-slate-800/60">
-          {conversations.map(conv => (
-            <div
-              key={conv.doctorId}
-              onClick={() => setActiveDoctorId(conv.doctorId)}
-              className={cn(
-                'p-4 flex items-start gap-3 cursor-pointer transition',
-                conv.doctorId === activeDoctorId
-                  ? 'bg-teal-500/10 border-l-4 border-teal-400'
-                  : 'hover:bg-slate-800/40'
-              )}
-            >
-              <div className="relative flex-shrink-0">
-                <div className="w-10 h-10 rounded-full bg-gradient-to-tr from-teal-500 to-cyan-500 flex items-center justify-center font-bold text-slate-950 text-xs">
-                  {conv.avatar}
-                </div>
-                {conv.online && (
-                  <span className="absolute bottom-0 right-0 w-3 h-3 rounded-full bg-emerald-400 border-2 border-slate-900" />
+          {conversations.length > 0 ? (
+            conversations.map(conv => (
+              <div
+                key={conv.doctorId}
+                onClick={() => setActiveDoctorId(conv.doctorId)}
+                className={cn(
+                  'p-4 flex items-start gap-3 cursor-pointer transition',
+                  conv.doctorId === activeDoctorId
+                    ? 'bg-teal-500/10 border-l-4 border-teal-400'
+                    : 'hover:bg-slate-800/40'
                 )}
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center justify-between">
-                  <h4 className="text-xs font-bold text-white truncate">{conv.doctorName}</h4>
-                  <span className="text-[10px] text-slate-500 font-mono">{conv.lastTime}</span>
+              >
+                <div className="relative flex-shrink-0">
+                  <div className="w-10 h-10 rounded-full bg-gradient-to-tr from-teal-500 to-cyan-500 flex items-center justify-center font-bold text-slate-950 text-xs">
+                    {conv.avatar}
+                  </div>
+                  {conv.online && (
+                    <span className="absolute bottom-0 right-0 w-3 h-3 rounded-full bg-emerald-400 border-2 border-slate-900" />
+                  )}
                 </div>
-                <p className="text-[11px] text-teal-400 font-medium">{conv.specialty}</p>
-                <p className="text-[11px] text-slate-400 truncate mt-0.5">{conv.lastMessage}</p>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-xs font-bold text-white truncate">{conv.doctorName}</h4>
+                    <span className="text-[10px] text-slate-500 font-mono">{conv.lastTime}</span>
+                  </div>
+                  <p className="text-[11px] text-teal-400 font-medium">{conv.specialty}</p>
+                  <p className="text-[11px] text-slate-400 truncate mt-0.5">{conv.lastMessage}</p>
+                </div>
               </div>
+            ))
+          ) : (
+            <div className="p-8 text-center space-y-2">
+              <MessageSquare className="w-8 h-8 text-slate-600 mx-auto" />
+              <p className="text-xs text-slate-400">No active doctor threads</p>
             </div>
-          ))}
+          )}
         </div>
       </div>
 
       {/* Chat Thread & Input */}
       <div className="flex-1 flex flex-col bg-slate-950/40">
-        {/* Chat Header */}
-        <div className="p-4 border-b border-slate-800 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-full bg-teal-500/20 text-teal-300 font-bold flex items-center justify-center text-xs">
-              {activeConv.avatar}
-            </div>
-            <div>
-              <h4 className="text-xs font-bold text-white">{activeConv.doctorName}</h4>
-              <p className="text-[11px] text-teal-400">{activeConv.specialty}</p>
-            </div>
-          </div>
-          <button
-            onClick={() => onShowToast('Telehealth', 'Starting direct audio call with doctor...')}
-            className="px-3 py-1.5 rounded-xl bg-teal-500/10 hover:bg-teal-500/20 text-teal-300 border border-teal-500/30 text-xs font-semibold transition"
-          >
-            Audio Call
-          </button>
-        </div>
-
-        {/* Messages Body */}
-        <div className="flex-1 overflow-y-auto p-4 space-y-3">
-          {activeConv.messages.map(msg => {
-            const isPatient = msg.senderRole === 'patient';
-            return (
-              <div
-                key={msg.id}
-                className={cn('flex flex-col', isPatient ? 'items-end' : 'items-start')}
-              >
-                <div
-                  className={cn(
-                    'max-w-md p-3.5 rounded-2xl text-xs leading-relaxed',
-                    isPatient
-                      ? 'bg-gradient-to-r from-teal-500 to-cyan-500 text-slate-950 font-medium rounded-br-sm'
-                      : 'bg-slate-800/80 text-slate-100 border border-slate-700/60 rounded-bl-sm'
-                  )}
-                >
-                  {msg.text}
+        {activeConv ? (
+          <>
+            {/* Chat Header */}
+            <div className="p-4 border-b border-slate-800 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 rounded-full bg-teal-500/20 text-teal-300 font-bold flex items-center justify-center text-xs">
+                  {activeConv.avatar}
                 </div>
-                <span className="text-[10px] text-slate-500 font-mono mt-1 px-1">
-                  {msg.timestamp}
-                </span>
+                <div>
+                  <h4 className="text-xs font-bold text-white">{activeConv.doctorName}</h4>
+                  <p className="text-[11px] text-teal-400">{activeConv.specialty}</p>
+                </div>
               </div>
-            );
-          })}
-        </div>
+              <button
+                onClick={() => onShowToast('Telehealth', 'Starting direct audio call with doctor...')}
+                className="px-3 py-1.5 rounded-xl bg-teal-500/10 hover:bg-teal-500/20 text-teal-300 border border-teal-500/30 text-xs font-semibold transition"
+              >
+                Audio Call
+              </button>
+            </div>
 
-        {/* Input Bar */}
-        <form onSubmit={handleSendMessage} className="p-3 border-t border-slate-800 flex items-center gap-2">
-          <input
-            type="text"
-            placeholder="Type your confidential medical message..."
-            value={inputText}
-            onChange={e => setInputText(e.target.value)}
-            className="flex-1 px-4 py-2.5 rounded-xl bg-slate-900 border border-slate-700 text-sm text-slate-100 focus:border-teal-400 outline-none"
-          />
-          <button
-            type="submit"
-            className="p-2.5 rounded-xl bg-teal-500 hover:bg-teal-400 text-slate-950 font-bold transition shadow"
-          >
-            <Send className="w-4 h-4" />
-          </button>
-        </form>
+            {/* Messages Body */}
+            <div className="flex-1 overflow-y-auto p-4 space-y-3">
+              {activeConv.messages.map(msg => {
+                const isPatient = msg.senderRole === 'patient';
+                return (
+                  <div
+                    key={msg.id}
+                    className={cn('flex flex-col', isPatient ? 'items-end' : 'items-start')}
+                  >
+                    <div
+                      className={cn(
+                        'max-w-md p-3.5 rounded-2xl text-xs leading-relaxed',
+                        isPatient
+                          ? 'bg-gradient-to-r from-teal-500 to-cyan-500 text-slate-950 font-medium rounded-br-sm'
+                          : 'bg-slate-800/80 text-slate-100 border border-slate-700/60 rounded-bl-sm'
+                      )}
+                    >
+                      {msg.text}
+                    </div>
+                    <span className="text-[10px] text-slate-500 font-mono mt-1 px-1">
+                      {msg.timestamp}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Input Bar */}
+            <form onSubmit={handleSendMessage} className="p-3 border-t border-slate-800 flex items-center gap-2">
+              <input
+                type="text"
+                placeholder="Type your confidential medical message..."
+                value={inputText}
+                onChange={e => setInputText(e.target.value)}
+                className="flex-1 px-4 py-2.5 rounded-xl bg-slate-900 border border-slate-700 text-sm text-slate-100 focus:border-teal-400 outline-none"
+              />
+              <button
+                type="submit"
+                className="p-2.5 rounded-xl bg-teal-500 hover:bg-teal-400 text-slate-950 font-bold transition shadow"
+              >
+                <Send className="w-4 h-4" />
+              </button>
+            </form>
+          </>
+        ) : (
+          <div className="flex-1 flex flex-col items-center justify-center p-8 text-center space-y-3">
+            <div className="w-12 h-12 rounded-2xl bg-teal-500/10 border border-teal-500/20 text-teal-400 flex items-center justify-center">
+              <MessageSquare className="w-6 h-6" />
+            </div>
+            <h4 className="text-base font-semibold text-white">No Conversation Selected</h4>
+            <p className="text-xs text-slate-400 max-w-sm">
+              Schedule a consultation with a specialist or message an attending doctor once your consultation begins.
+            </p>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -3085,35 +2896,7 @@ function ProfileSection({
 // ============================================================================
 
 function AccessControlSection({ onShowToast }: { onShowToast: (t: string, d?: string) => void }) {
-  const [rules, setRules] = useState<AccessRule[]>([
-    {
-      id: 'acc-1',
-      entityName: 'Dr. Sarah Chen, MD',
-      entityType: 'Doctor',
-      grantedDate: '2026-03-01',
-      expiry: '2026-06-01',
-      permissions: { records: true, vitals: true, prescriptions: true, labs: true },
-      status: 'Active',
-    },
-    {
-      id: 'acc-2',
-      entityName: 'St. Jude General Hospital',
-      entityType: 'Hospital',
-      grantedDate: '2026-01-15',
-      expiry: 'Until Revoked',
-      permissions: { records: true, vitals: true, prescriptions: true, labs: true },
-      status: 'Active',
-    },
-    {
-      id: 'acc-3',
-      entityName: 'Metro Diagnostic Laboratories',
-      entityType: 'Diagnostic Lab',
-      grantedDate: '2026-02-20',
-      expiry: '2026-03-25',
-      permissions: { records: false, vitals: false, prescriptions: false, labs: true },
-      status: 'Active',
-    },
-  ]);
+  const [rules, setRules] = useState<AccessRule[]>([]);
 
   const togglePermission = (id: string, key: keyof AccessRule['permissions']) => {
     setRules(prev =>
@@ -3151,58 +2934,69 @@ function AccessControlSection({ onShowToast }: { onShowToast: (t: string, d?: st
       </div>
 
       <div className="space-y-4">
-        {rules.map(rule => (
-          <div
-            key={rule.id}
-            className="rounded-3xl bg-slate-900/60 border border-slate-800/80 p-6 backdrop-blur-xl flex flex-col md:flex-row md:items-center justify-between gap-6"
-          >
-            <div className="space-y-1">
-              <div className="flex items-center gap-2">
-                <ShieldCheck className="w-5 h-5 text-teal-400" />
-                <h4 className="text-base font-bold text-white">{rule.entityName}</h4>
-                <span className="text-xs text-teal-400 font-mono">({rule.entityType})</span>
-              </div>
-              <p className="text-xs text-slate-400">
-                Granted: {rule.grantedDate} • Expiry: {rule.expiry}
-              </p>
+        {rules.length > 0 ? (
+          rules.map(rule => (
+            <div
+              key={rule.id}
+              className="rounded-3xl bg-slate-900/60 border border-slate-800/80 p-6 backdrop-blur-xl flex flex-col md:flex-row md:items-center justify-between gap-6"
+            >
+              <div className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <ShieldCheck className="w-5 h-5 text-teal-400" />
+                  <h4 className="text-base font-bold text-white">{rule.entityName}</h4>
+                  <span className="text-xs text-teal-400 font-mono">({rule.entityType})</span>
+                </div>
+                <p className="text-xs text-slate-400">
+                  Granted: {rule.grantedDate} • Expiry: {rule.expiry}
+                </p>
 
-              {/* Permission Toggles */}
-              <div className="flex flex-wrap items-center gap-2 pt-3">
-                {(
-                  [
-                    { key: 'records', label: 'Clinical Records' },
-                    { key: 'vitals', label: 'Vitals Stream' },
-                    { key: 'prescriptions', label: 'Prescriptions' },
-                    { key: 'labs', label: 'Lab Reports' },
-                  ] as const
-                ).map(perm => (
-                  <button
-                    key={perm.key}
-                    onClick={() => togglePermission(rule.id, perm.key)}
-                    className={cn(
-                      'px-2.5 py-1 rounded-lg text-xs font-semibold transition border flex items-center gap-1.5',
-                      rule.permissions[perm.key]
-                        ? 'bg-teal-500/20 text-teal-300 border-teal-500/40'
-                        : 'bg-slate-950 text-slate-500 border-slate-800 line-through'
-                    )}
-                  >
-                    {rule.permissions[perm.key] ? <Check className="w-3 h-3 text-teal-400" /> : <X className="w-3 h-3" />}
-                    {perm.label}
-                  </button>
-                ))}
+                {/* Permission Toggles */}
+                <div className="flex flex-wrap items-center gap-2 pt-3">
+                  {(
+                    [
+                      { key: 'records', label: 'Clinical Records' },
+                      { key: 'vitals', label: 'Vitals Stream' },
+                      { key: 'prescriptions', label: 'Prescriptions' },
+                      { key: 'labs', label: 'Lab Reports' },
+                    ] as const
+                  ).map(perm => (
+                    <button
+                      key={perm.key}
+                      onClick={() => togglePermission(rule.id, perm.key)}
+                      className={cn(
+                        'px-2.5 py-1 rounded-lg text-xs font-semibold transition border flex items-center gap-1.5',
+                        rule.permissions[perm.key]
+                          ? 'bg-teal-500/20 text-teal-300 border-teal-500/40'
+                          : 'bg-slate-950 text-slate-500 border-slate-800 line-through'
+                      )}
+                    >
+                      {rule.permissions[perm.key] ? <Check className="w-3 h-3 text-teal-400" /> : <X className="w-3 h-3" />}
+                      {perm.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => revokeAccess(rule.id, rule.entityName)}
+                  className="px-4 py-2 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/30 text-xs font-semibold transition flex items-center gap-1.5"
+                >
+                  <Trash2 className="w-3.5 h-3.5" /> Revoke Access
+                </button>
               </div>
             </div>
-
-            <div className="flex items-center gap-3">
-              <button
-                onClick={() => revokeAccess(rule.id, rule.entityName)}
-                className="px-4 py-2 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/30 text-xs font-semibold transition flex items-center gap-1.5"
-              >
-                <Trash2 className="w-3.5 h-3.5" /> Revoke Access
-              </button>
-            </div>
+          ))
+        ) : (
+          <div className="p-12 rounded-3xl bg-slate-900/40 border border-slate-800/80 text-center space-y-3">
+            <ShieldCheck className="w-10 h-10 text-teal-500 mx-auto" />
+            <h4 className="text-base font-semibold text-white">Full Privacy Maintained</h4>
+            <p className="text-xs text-slate-400 max-w-md mx-auto">
+              No external physicians or healthcare institutions currently have access to your health record.
+              Your data is fully encrypted and accessible exclusively by you until you choose to grant permission.
+            </p>
           </div>
-        ))}
+        )}
       </div>
     </div>
   );
