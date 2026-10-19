@@ -19,7 +19,7 @@ import {
   User,
 } from 'lucide-react';
 import { AuthModal, type AuthMode } from '@/components/auth/AuthModal';
-import { getCurrentProfile, type UserRole } from '@/lib/supabase';
+import { getCurrentProfile, signOut as sbSignOut, type UserRole, type UserProfile } from '@/lib/supabase';
 import { cn } from '@/lib/utils';
 
 export const Landing: React.FC = () => {
@@ -27,29 +27,19 @@ export const Landing: React.FC = () => {
   const [authOpen, setAuthOpen] = useState(false);
   const [authMode, setAuthMode] = useState<AuthMode>('signin');
   const [authRole, setAuthRole] = useState<UserRole>('patient');
-  const [checkingSession, setCheckingSession] = useState(true);
+  const [activeProfile, setActiveProfile] = useState<UserProfile | null>(null);
 
-  // Auto-redirect if user already has an active session
+  // Check if user has an existing session for navbar convenience, but NEVER force-redirect away from homepage
   useEffect(() => {
     let isMounted = true;
     async function checkExistingSession() {
       try {
         const profile = await getCurrentProfile();
         if (profile && isMounted) {
-          if (profile.role === 'doctor') {
-            navigate('/doctor', { replace: true });
-          } else if (profile.role === 'institution') {
-            navigate('/institution', { replace: true });
-          } else {
-            navigate('/patient', { replace: true });
-          }
+          setActiveProfile(profile);
         }
       } catch {
-        // No session or error fetching profile - stay on landing
-      } finally {
-        if (isMounted) {
-          setCheckingSession(false);
-        }
+        // stay on landing page
       }
     }
 
@@ -57,7 +47,7 @@ export const Landing: React.FC = () => {
     return () => {
       isMounted = false;
     };
-  }, [navigate]);
+  }, []);
 
   const handleOpenAuth = (mode: AuthMode, role: UserRole = 'patient') => {
     setAuthMode(mode);
@@ -193,22 +183,52 @@ export const Landing: React.FC = () => {
             </div>
           </div>
 
-          <div className="flex items-center space-x-3 sm:space-x-4">
-            <button
-              type="button"
-              onClick={() => handleOpenAuth('signin')}
-              className="px-4 py-2 sm:px-5 sm:py-2.5 rounded-xl text-sm font-semibold text-slate-200 hover:text-white hover:bg-white/5 border border-white/10 transition-all duration-200"
-            >
-              Sign In
-            </button>
-            <button
-              type="button"
-              onClick={() => handleOpenAuth('signup', 'patient')}
-              className="px-4 py-2 sm:px-5 sm:py-2.5 rounded-xl text-sm font-semibold bg-gradient-to-r from-cyan-500 to-teal-400 text-slate-950 hover:from-cyan-400 hover:to-teal-300 shadow-lg shadow-cyan-950/50 transition-all duration-200 flex items-center space-x-1.5"
-            >
-              <span>Get Started</span>
-              <ArrowRight className="w-4 h-4" />
-            </button>
+          <div className="flex items-center space-x-2 sm:space-x-3">
+            {activeProfile ? (
+              <>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (activeProfile.role === 'doctor') navigate('/doctor');
+                    else if (activeProfile.role === 'institution') navigate('/institution');
+                    else navigate('/patient');
+                  }}
+                  className="px-3.5 py-2 sm:px-4 sm:py-2.5 rounded-xl text-xs sm:text-sm font-semibold bg-gradient-to-r from-cyan-500 to-teal-400 text-slate-950 hover:from-cyan-400 hover:to-teal-300 shadow-md shadow-cyan-950/40 transition-all flex items-center gap-1.5"
+                >
+                  <span>Go to Dashboard</span>
+                  <ArrowRight className="w-3.5 h-3.5" />
+                </button>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    await sbSignOut();
+                    setActiveProfile(null);
+                    window.location.reload();
+                  }}
+                  className="px-3 py-2 sm:px-4 sm:py-2.5 rounded-xl text-xs sm:text-sm font-semibold text-rose-300 hover:text-white hover:bg-rose-500/20 border border-rose-500/30 transition-all"
+                >
+                  Sign Out
+                </button>
+              </>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  onClick={() => handleOpenAuth('signin')}
+                  className="px-4 py-2 sm:px-5 sm:py-2.5 rounded-xl text-sm font-semibold text-slate-200 hover:text-white hover:bg-white/5 border border-white/10 transition-all duration-200"
+                >
+                  Sign In
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleOpenAuth('signup', 'patient')}
+                  className="px-4 py-2 sm:px-5 sm:py-2.5 rounded-xl text-sm font-semibold bg-gradient-to-r from-cyan-500 to-teal-400 text-slate-950 hover:from-cyan-400 hover:to-teal-300 shadow-lg shadow-cyan-950/50 transition-all duration-200 flex items-center space-x-1.5"
+                >
+                  <span>Get Started</span>
+                  <ArrowRight className="w-4 h-4" />
+                </button>
+              </>
+            )}
           </div>
         </div>
       </header>

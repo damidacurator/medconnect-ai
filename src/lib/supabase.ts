@@ -117,9 +117,29 @@ export async function resetPassword(email: string) {
 }
 
 export async function signOut() {
-  const { error } = await supabase.auth.signOut();
-  if (error) {
-    throw error;
+  try {
+    await supabase.auth.signOut({ scope: 'local' });
+  } catch (err) {
+    console.warn('Local auth signOut note:', err);
+  }
+  try {
+    await supabase.auth.signOut();
+  } catch (err) {
+    console.warn('Global auth signOut note:', err);
+  }
+  try {
+    localStorage.removeItem('medconnect_demo_user');
+    const keysToRemove: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && (key.startsWith('sb-') || key.includes('supabase.auth') || key.includes('medconnect_demo'))) {
+        keysToRemove.push(key);
+      }
+    }
+    keysToRemove.forEach(k => localStorage.removeItem(k));
+    sessionStorage.clear();
+  } catch (err) {
+    console.warn('Storage cleanup note:', err);
   }
 }
 

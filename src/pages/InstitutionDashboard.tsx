@@ -259,6 +259,14 @@ export function InstitutionDashboard() {
   const [globalSearch, setGlobalSearch] = useState('');
   const [currentTime, setCurrentTime] = useState(new Date());
 
+  // Session guard
+  useEffect(() => {
+    const demo = localStorage.getItem('medconnect_demo_user');
+    if (!user && !profile && !demo) {
+      window.location.href = '/';
+    }
+  }, [user, profile]);
+
   // Facility Metadata
   const [facility, setFacility] = useState<FacilityDetails>(() => {
     const meta = (profile?.metadata as any) || {};
@@ -753,9 +761,12 @@ export function InstitutionDashboard() {
               <p className="text-[10px] text-slate-400 truncate">{user?.email}</p>
             </div>
             <button
-              onClick={signOut}
+              onClick={async () => {
+                await signOut();
+                window.location.href = '/';
+              }}
               title="Sign Out"
-              className="p-1.5 text-slate-400 hover:text-rose-400 hover:bg-slate-700/50 rounded-lg transition-colors"
+              className="p-1.5 text-slate-400 hover:text-rose-400 hover:bg-slate-700/50 rounded-lg transition-colors cursor-pointer"
             >
               <LogOut className="w-3.5 h-3.5" />
             </button>
@@ -812,6 +823,19 @@ export function InstitutionDashboard() {
             >
               <Radio className="w-3.5 h-3.5 text-cyan-400" />
               <span className="hidden md:inline">Broadcast</span>
+            </button>
+
+            {/* Quick Action: Sign Out */}
+            <button
+              onClick={async () => {
+                await signOut();
+                window.location.href = '/';
+              }}
+              title="Sign Out"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-rose-500/10 border border-rose-500/30 text-xs font-semibold text-rose-300 hover:bg-rose-500/20 hover:text-white transition-colors cursor-pointer"
+            >
+              <LogOut className="w-3.5 h-3.5" />
+              <span className="hidden md:inline">Sign Out</span>
             </button>
           </div>
         </header>
@@ -3416,8 +3440,11 @@ function ModuleHospitalSettings({ facility, signOut }: ModuleHospitalSettingsPro
             <p className="text-[11px] text-slate-500">Terminates administrative session on this workstation.</p>
           </div>
           <button
-            onClick={signOut}
-            className="px-4 py-2 rounded-xl bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/40 text-xs font-bold transition-colors"
+            onClick={async () => {
+              await signOut();
+              window.location.href = '/';
+            }}
+            className="px-4 py-2 rounded-xl bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/40 text-xs font-bold transition-colors cursor-pointer"
           >
             Sign Out
           </button>

@@ -212,6 +212,14 @@ export function PatientDashboard() {
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [toastMessage, setToastMessage] = useState<{ title: string; desc?: string; type: 'success' | 'info' | 'error' } | null>(null);
 
+  // If not authenticated, return to home
+  useEffect(() => {
+    const demo = localStorage.getItem('medconnect_demo_user');
+    if (!user && !profile && !demo) {
+      window.location.href = '/';
+    }
+  }, [user, profile]);
+
   // Patient Profile & Onboarding State
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [onboardingData, setOnboardingData] = useState({
@@ -578,8 +586,11 @@ export function PatientDashboard() {
         {/* Sidebar Footer Logout */}
         <div className="p-3 border-t border-slate-800/80">
           <button
-            onClick={signOut}
-            className="w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-medium text-rose-400 hover:bg-rose-500/10 transition-colors"
+            onClick={async () => {
+              await signOut();
+              window.location.href = '/';
+            }}
+            className="w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-medium text-rose-400 hover:bg-rose-500/10 transition-colors cursor-pointer"
           >
             <LogOut className="w-4 h-4" />
             <span>Sign Out</span>
@@ -675,6 +686,19 @@ export function PatientDashboard() {
                 {patientDisplayName}
               </span>
             </div>
+
+            {/* Quick Sign Out Action */}
+            <button
+              onClick={async () => {
+                await signOut();
+                window.location.href = '/';
+              }}
+              title="Sign Out"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/30 text-xs font-semibold transition cursor-pointer"
+            >
+              <LogOut className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Sign Out</span>
+            </button>
           </div>
         </header>
 
@@ -3218,8 +3242,11 @@ function SettingsSection({
           Export All Health Records (FHIR / JSON)
         </button>
         <button
-          onClick={signOut}
-          className="w-full py-2.5 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/30 text-xs font-bold transition flex items-center justify-center gap-2"
+          onClick={async () => {
+            await signOut();
+            window.location.href = '/';
+          }}
+          className="w-full py-2.5 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/30 text-xs font-bold transition flex items-center justify-center gap-2 cursor-pointer"
         >
           <LogOut className="w-4 h-4" /> Sign Out from This Device
         </button>

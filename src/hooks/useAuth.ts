@@ -112,8 +112,8 @@ export function useAuth(): UseAuthReturn {
   const handleSignOut = async () => {
     try {
       await sbSignOut();
-    } catch {
-      // ignore
+    } catch (err) {
+      console.warn('Error in signOut:', err);
     }
     localStorage.removeItem('medconnect_demo_user');
     setState({
@@ -123,6 +123,8 @@ export function useAuth(): UseAuthReturn {
       loading: false,
       isDemo: false,
     });
+    // Redirect to homepage cleanly
+    window.location.href = '/';
   };
 
   return {

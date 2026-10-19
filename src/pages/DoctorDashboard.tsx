@@ -153,6 +153,14 @@ export function DoctorDashboard() {
   const auth = useAuth?.() || {};
   const user = auth.user || null;
 
+  // Session guard
+  useEffect(() => {
+    const demo = localStorage.getItem('medconnect_demo_user');
+    if (!auth.loading && !user && !auth.profile && !demo) {
+      window.location.href = '/';
+    }
+  }, [user, auth.profile, auth.loading]);
+
   // State
   const [activeTab, setActiveTab] = useState<string>('overview');
   const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -563,11 +571,11 @@ export function DoctorDashboard() {
         {/* Footer / Logout */}
         <div className="p-3 border-t border-white/10">
           <button
-            onClick={() => {
-              if (auth.signOut) auth.signOut();
-              showToast('Logged out successfully');
+            onClick={async () => {
+              if (auth.signOut) await auth.signOut();
+              window.location.href = '/';
             }}
-            className="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-xs font-medium text-rose-400 hover:bg-rose-500/10 transition"
+            className="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-xs font-medium text-rose-400 hover:bg-rose-500/10 transition cursor-pointer"
           >
             <LogOut className="w-4 h-4 shrink-0" />
             {sidebarOpen && <span>Sign Out</span>}
@@ -599,6 +607,18 @@ export function DoctorDashboard() {
             >
               <Plus className="w-4 h-4" />
               <span>New Consultation</span>
+            </button>
+
+            <button
+              onClick={async () => {
+                if (auth.signOut) await auth.signOut();
+                window.location.href = '/';
+              }}
+              title="Sign Out"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/30 text-xs font-semibold transition cursor-pointer"
+            >
+              <LogOut className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Sign Out</span>
             </button>
           </div>
         </header>
