@@ -36,7 +36,11 @@ import {
   Stethoscope,
   Info,
   Copy,
-  Key
+  Key,
+  MapPin,
+  Home,
+  Globe,
+  Users
 } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import {
@@ -58,6 +62,8 @@ import {
   getPatientAccessPin,
   regeneratePatientAccessPin,
   getAuthorizedDoctors,
+  fetchAuthorizedDoctorsCloud,
+  addAuthorizedDoctor,
   revokeDoctorAccess,
   registerOrUpdatePatientAccess,
   type AuthorizedDoctor,
@@ -924,6 +930,7 @@ function OverviewSection({
   latestVitals,
   symptomsHistory,
   onNavigate,
+  onShowToast,
 }: OverviewSectionProps) {
   const hasVitals = !!(latestVitals && (latestVitals.heart_rate || latestVitals.systolic_bp));
   const healthScore = hasVitals ? 92 : null;
@@ -935,7 +942,7 @@ function OverviewSection({
       <div className="relative overflow-hidden rounded-3xl bg-gradient-to-r from-teal-900/40 via-slate-900/80 to-slate-900/90 border border-teal-500/30 p-6 sm:p-8 backdrop-blur-xl">
         <div className="absolute -top-12 -right-12 w-64 h-64 bg-teal-500/10 rounded-full blur-3xl pointer-events-none" />
         <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-6">
-          <div className="space-y-2">
+          <div className="space-y-2.5">
             <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-teal-500/20 border border-teal-500/30 text-teal-300 text-xs font-semibold">
               <Sparkles className="w-3.5 h-3.5" />
               AI Health Intelligence Active
@@ -948,6 +955,32 @@ function OverviewSection({
                 ? 'Your baseline vitals have been recorded. You can update them anytime or consult with a physician.'
                 : 'Welcome to your MedConnect universal health record. Record your baseline vitals to initialize your health tracker.'}
             </p>
+
+            {/* Permanent Patient ID Badge with 1-click Copy */}
+            <div className="flex flex-wrap items-center gap-3 pt-1">
+              <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-black/50 border border-teal-500/30 text-xs">
+                <span className="text-slate-400 font-medium">Patient ID:</span>
+                <span className="font-mono font-bold text-teal-300 tracking-wider select-all">{patientId}</span>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    try {
+                      await navigator.clipboard.writeText(patientId);
+                      onShowToast('Patient ID Copied', `ID ${patientId} copied to clipboard. Share with your doctor.`, 'success');
+                    } catch {
+                      onShowToast('Patient ID', patientId, 'info');
+                    }
+                  }}
+                  title="Copy Patient ID to share with your attending doctor"
+                  className="p-1 rounded-md hover:bg-white/10 text-teal-400 hover:text-white transition cursor-pointer"
+                >
+                  <Copy className="w-3.5 h-3.5" />
+                </button>
+              </div>
+              <span className="text-[11px] text-slate-400">
+                Give this ID to your doctor to grant them access to your health passport.
+              </span>
+            </div>
           </div>
 
           {/* Quick Actions Bar */}
@@ -2968,49 +3001,94 @@ function ProfileSection({
   onProfileUpdated,
   onShowToast,
 }: ProfileSectionProps) {
+  const meta = (profile?.metadata as any) || {};
+
+  // Primary Personal Biodata
   const [fullName, setFullName] = useState(
     profile?.full_name || (user?.user_metadata?.full_name as string) || (user?.email ? user.email.split('@')[0] : '')
   );
   const [age, setAge] = useState(profile?.age?.toString() || '');
+  const [dateOfBirth, setDateOfBirth] = useState(meta.date_of_birth || '');
   const [gender, setGender] = useState(profile?.gender || 'prefer_not_to_say');
-  const [bloodGroup, setBloodGroup] = useState(
-    profile?.metadata && (profile.metadata as any).blood_group ? (profile.metadata as any).blood_group : ''
-  );
+  const [maritalStatus, setMaritalStatus] = useState(meta.marital_status || 'Single');
+  const [occupation, setOccupation] = useState(meta.occupation || '');
+
+  // Origin & Nationality
+  const [countryOfOrigin, setCountryOfOrigin] = useState(meta.country_of_origin || 'Nigeria');
+  const [placeOfOrigin, setPlaceOfOrigin] = useState(meta.place_of_origin || '');
+  const [primaryLanguage, setPrimaryLanguage] = useState(meta.primary_language || 'English');
+
+  // Residential Information (Where You Live)
+  const [residentialAddress, setResidentialAddress] = useState(meta.residential_address || '');
+  const [city, setCity] = useState(meta.city || '');
+  const [state, setState] = useState(meta.state || '');
+  const [countryOfResidence, setCountryOfResidence] = useState(meta.country_of_residence || 'Nigeria');
+  const [postalCode, setPostalCode] = useState(meta.postal_code || '');
+
+  // Contact Details
   const [phone, setPhone] = useState(profile?.phone || '');
-  const [emergencyContact, setEmergencyContact] = useState(
-    profile?.metadata && (profile.metadata as any).emergency_contact
-      ? (profile.metadata as any).emergency_contact
-      : ''
-  );
-  const [allergies, setAllergies] = useState(
-    profile?.metadata && (profile.metadata as any).allergies
-      ? (profile.metadata as any).allergies
-      : ''
-  );
-  const [chronicConditions, setChronicConditions] = useState(
-    profile?.metadata && (profile.metadata as any).chronic_conditions
-      ? (profile.metadata as any).chronic_conditions
-      : ''
-  );
+  const [emergencyContact, setEmergencyContact] = useState(meta.emergency_contact || '');
+
+  // Clinical & Biological Profile
+  const [bloodGroup, setBloodGroup] = useState(meta.blood_group || '');
+  const [genotype, setGenotype] = useState(meta.genotype || 'AA');
+  const [allergies, setAllergies] = useState(meta.allergies || '');
+  const [chronicConditions, setChronicConditions] = useState(meta.chronic_conditions || '');
+
+  // Next of Kin Dossier (Where Your Next of Kin Lives)
+  const [nextOfKinName, setNextOfKinName] = useState(meta.next_of_kin_name || '');
+  const [nextOfKinRelationship, setNextOfKinRelationship] = useState(meta.next_of_kin_relationship || 'Spouse');
+  const [nextOfKinPhone, setNextOfKinPhone] = useState(meta.next_of_kin_phone || '');
+  const [nextOfKinEmail, setNextOfKinEmail] = useState(meta.next_of_kin_email || '');
+  const [nextOfKinAddress, setNextOfKinAddress] = useState(meta.next_of_kin_address || '');
+  const [nextOfKinCity, setNextOfKinCity] = useState(meta.next_of_kin_city || '');
+  const [nextOfKinState, setNextOfKinState] = useState(meta.next_of_kin_state || '');
+  const [nextOfKinCountry, setNextOfKinCountry] = useState(meta.next_of_kin_country || 'Nigeria');
+
   const [saving, setSaving] = useState(false);
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     setSaving(true);
+
+    const fullMetadata = {
+      ...meta,
+      date_of_birth: dateOfBirth,
+      marital_status: maritalStatus,
+      occupation,
+      country_of_origin: countryOfOrigin,
+      place_of_origin: placeOfOrigin,
+      primary_language: primaryLanguage,
+      residential_address: residentialAddress,
+      city,
+      state,
+      country_of_residence: countryOfResidence,
+      postal_code: postalCode,
+      emergency_contact: emergencyContact,
+      blood_group: bloodGroup,
+      genotype,
+      allergies,
+      chronic_conditions: chronicConditions,
+      next_of_kin_name: nextOfKinName,
+      next_of_kin_relationship: nextOfKinRelationship,
+      next_of_kin_phone: nextOfKinPhone,
+      next_of_kin_email: nextOfKinEmail,
+      next_of_kin_address: nextOfKinAddress,
+      next_of_kin_city: nextOfKinCity,
+      next_of_kin_state: nextOfKinState,
+      next_of_kin_country: nextOfKinCountry,
+    };
+
     try {
       await updateProfile(user?.id || '', {
         full_name: fullName,
         age: age ? parseInt(age, 10) : null,
         gender,
         phone,
-        metadata: {
-          blood_group: bloodGroup,
-          emergency_contact: emergencyContact,
-          allergies,
-          chronic_conditions: chronicConditions,
-        },
+        metadata: fullMetadata,
       });
       onProfileUpdated();
+      onShowToast('Biodata Saved to Cloud', 'Your complete medical and residential dossier has been persisted to Supabase.');
     } catch {
       onShowToast('Notice', 'Profile updated in local session.');
     } finally {
@@ -3033,6 +3111,7 @@ function ProfileSection({
                 {patientIdCode}
               </span>
               <span className="text-xs text-slate-400">• Blood: {bloodGroup || '--'}</span>
+              <span className="text-xs text-slate-400">• Genotype: {genotype || '--'}</span>
               <span className="text-xs text-slate-400">• Age: {age ? `${age} yrs` : '--'}</span>
             </div>
           </div>
@@ -3041,110 +3120,376 @@ function ProfileSection({
         <div className="text-xs text-slate-400 sm:text-right">
           <p>Account Email: {user?.email || ''}</p>
           <span className="text-emerald-400 font-semibold inline-flex items-center gap-1 mt-1">
-            <ShieldCheck className="w-3.5 h-3.5" /> HIPAA Encrypted Identity
+            <ShieldCheck className="w-3.5 h-3.5" /> HIPAA Encrypted Dossier
           </span>
         </div>
       </div>
 
-      {/* Profile Form */}
-      <form onSubmit={handleSave} className="rounded-3xl bg-slate-900/60 border border-slate-800/80 p-6 sm:p-8 backdrop-blur-xl space-y-6">
-        <h3 className="text-lg font-bold text-white border-b border-slate-800 pb-3">Personal & Clinical Information</h3>
-
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          <div>
-            <label className="block text-xs font-semibold text-slate-300 mb-1.5">Full Legal Name</label>
-            <input
-              type="text"
-              required
-              placeholder="Enter your full legal name"
-              value={fullName}
-              onChange={e => setFullName(e.target.value)}
-              className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-sm text-slate-100 focus:border-teal-400 outline-none"
-            />
+      {/* Comprehensive Biodata Form */}
+      <form onSubmit={handleSave} className="rounded-3xl bg-slate-900/60 border border-slate-800/80 p-6 sm:p-8 backdrop-blur-xl space-y-8">
+        
+        {/* Module A: Personal Identity */}
+        <div>
+          <div className="flex items-center gap-2 mb-4 pb-2 border-b border-slate-800">
+            <User className="w-4 h-4 text-teal-400" />
+            <h3 className="text-base font-bold text-white">1. Personal Identity & Status</h3>
           </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            <div>
+              <label className="block text-xs font-semibold text-slate-300 mb-1.5">Full Legal Name *</label>
+              <input
+                type="text"
+                required
+                placeholder="e.g. Oluwadamilare Idowu"
+                value={fullName}
+                onChange={e => setFullName(e.target.value)}
+                className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-sm text-slate-100 focus:border-teal-400 outline-none"
+              />
+            </div>
 
-          <div>
-            <label className="block text-xs font-semibold text-slate-300 mb-1.5">Age</label>
-            <input
-              type="number"
-              placeholder="Age (years)"
-              value={age}
-              onChange={e => setAge(e.target.value)}
-              className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-sm text-slate-100 focus:border-teal-400 outline-none"
-            />
-          </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-300 mb-1.5">Date of Birth</label>
+              <input
+                type="date"
+                value={dateOfBirth}
+                onChange={e => setDateOfBirth(e.target.value)}
+                className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-sm text-slate-100 focus:border-teal-400 outline-none"
+              />
+            </div>
 
-          <div>
-            <label className="block text-xs font-semibold text-slate-300 mb-1.5">Gender</label>
-            <select
-              value={gender}
-              onChange={e => setGender(e.target.value)}
-              className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-sm text-slate-100 focus:border-teal-400 outline-none"
-            >
-              <option value="prefer_not_to_say">Prefer not to say</option>
-              <option value="female">Female</option>
-              <option value="male">Male</option>
-              <option value="other">Other</option>
-            </select>
-          </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-300 mb-1.5">Age (Years)</label>
+              <input
+                type="number"
+                placeholder="e.g. 28"
+                value={age}
+                onChange={e => setAge(e.target.value)}
+                className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-sm text-slate-100 focus:border-teal-400 outline-none"
+              />
+            </div>
 
-          <div>
-            <label className="block text-xs font-semibold text-slate-300 mb-1.5">Blood Group</label>
-            <select
-              value={bloodGroup}
-              onChange={e => setBloodGroup(e.target.value)}
-              className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-sm text-slate-100 focus:border-teal-400 outline-none"
-            >
-              <option value="">Select Blood Group</option>
-              {['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'].map(b => (
-                <option key={b} value={b}>{b}</option>
-              ))}
-            </select>
-          </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-300 mb-1.5">Gender</label>
+              <select
+                value={gender}
+                onChange={e => setGender(e.target.value)}
+                className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-sm text-slate-100 focus:border-teal-400 outline-none"
+              >
+                <option value="prefer_not_to_say">Prefer not to say</option>
+                <option value="female">Female</option>
+                <option value="male">Male</option>
+                <option value="other">Other</option>
+              </select>
+            </div>
 
-          <div>
-            <label className="block text-xs font-semibold text-slate-300 mb-1.5">Contact Phone</label>
-            <input
-              type="tel"
-              placeholder="Phone number"
-              value={phone}
-              onChange={e => setPhone(e.target.value)}
-              className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-sm text-slate-100 focus:border-teal-400 outline-none"
-            />
-          </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-300 mb-1.5">Marital Status</label>
+              <select
+                value={maritalStatus}
+                onChange={e => setMaritalStatus(e.target.value)}
+                className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-sm text-slate-100 focus:border-teal-400 outline-none"
+              >
+                <option value="Single">Single</option>
+                <option value="Married">Married</option>
+                <option value="Divorced">Divorced</option>
+                <option value="Widowed">Widowed</option>
+              </select>
+            </div>
 
-          <div>
-            <label className="block text-xs font-semibold text-slate-300 mb-1.5">Emergency Contact Details</label>
-            <input
-              type="text"
-              placeholder="Name & emergency phone"
-              value={emergencyContact}
-              onChange={e => setEmergencyContact(e.target.value)}
-              className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-sm text-slate-100 focus:border-teal-400 outline-none"
-            />
+            <div>
+              <label className="block text-xs font-semibold text-slate-300 mb-1.5">Occupation / Employment</label>
+              <input
+                type="text"
+                placeholder="e.g. Software Engineer, Healthcare Admin"
+                value={occupation}
+                onChange={e => setOccupation(e.target.value)}
+                className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-sm text-slate-100 focus:border-teal-400 outline-none"
+              />
+            </div>
           </div>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2">
-          <div>
-            <label className="block text-xs font-semibold text-slate-300 mb-1.5">Known Allergies</label>
-            <textarea
-              rows={2}
-              value={allergies}
-              onChange={e => setAllergies(e.target.value)}
-              placeholder="e.g. Penicillin, Sulfa drugs, Peanuts..."
-              className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-sm text-slate-100 focus:border-teal-400 outline-none resize-none"
-            />
+        {/* Module B: Nationality & Place of Origin */}
+        <div>
+          <div className="flex items-center gap-2 mb-4 pb-2 border-b border-slate-800">
+            <Globe className="w-4 h-4 text-cyan-400" />
+            <h3 className="text-base font-bold text-white">2. Nationality & Place of Origin</h3>
           </div>
-          <div>
-            <label className="block text-xs font-semibold text-slate-300 mb-1.5">Pre-existing & Chronic Conditions</label>
-            <textarea
-              rows={2}
-              value={chronicConditions}
-              onChange={e => setChronicConditions(e.target.value)}
-              placeholder="e.g. Asthma, Hypertension, Diabetes Type II..."
-              className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-sm text-slate-100 focus:border-teal-400 outline-none resize-none"
-            />
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            <div>
+              <label className="block text-xs font-semibold text-slate-300 mb-1.5">Country of Origin *</label>
+              <input
+                type="text"
+                placeholder="e.g. Nigeria, Ghana, United Kingdom, USA"
+                value={countryOfOrigin}
+                onChange={e => setCountryOfOrigin(e.target.value)}
+                className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-sm text-slate-100 focus:border-teal-400 outline-none"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-slate-300 mb-1.5">Place / State of Origin *</label>
+              <input
+                type="text"
+                placeholder="e.g. Ogun State, Lagos State, Texas"
+                value={placeOfOrigin}
+                onChange={e => setPlaceOfOrigin(e.target.value)}
+                className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-sm text-slate-100 focus:border-teal-400 outline-none"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-slate-300 mb-1.5">Primary Language</label>
+              <input
+                type="text"
+                placeholder="e.g. English, Yoruba, French"
+                value={primaryLanguage}
+                onChange={e => setPrimaryLanguage(e.target.value)}
+                className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-sm text-slate-100 focus:border-teal-400 outline-none"
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* Module C: Residential Address (Where you live) */}
+        <div>
+          <div className="flex items-center gap-2 mb-4 pb-2 border-b border-slate-800">
+            <Home className="w-4 h-4 text-teal-400" />
+            <h3 className="text-base font-bold text-white">3. Residential Address (Where You Live)</h3>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            <div className="sm:col-span-2">
+              <label className="block text-xs font-semibold text-slate-300 mb-1.5">Residential Street Address *</label>
+              <input
+                type="text"
+                placeholder="e.g. Plot 12, Admiralty Way, Lekki Phase 1"
+                value={residentialAddress}
+                onChange={e => setResidentialAddress(e.target.value)}
+                className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-sm text-slate-100 focus:border-teal-400 outline-none"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-slate-300 mb-1.5">City / Town *</label>
+              <input
+                type="text"
+                placeholder="e.g. Ikeja, Lagos"
+                value={city}
+                onChange={e => setCity(e.target.value)}
+                className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-sm text-slate-100 focus:border-teal-400 outline-none"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-slate-300 mb-1.5">State / Province *</label>
+              <input
+                type="text"
+                placeholder="e.g. Lagos State"
+                value={state}
+                onChange={e => setState(e.target.value)}
+                className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-sm text-slate-100 focus:border-teal-400 outline-none"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-slate-300 mb-1.5">Country of Residence *</label>
+              <input
+                type="text"
+                placeholder="e.g. Nigeria"
+                value={countryOfResidence}
+                onChange={e => setCountryOfResidence(e.target.value)}
+                className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-sm text-slate-100 focus:border-teal-400 outline-none"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-slate-300 mb-1.5">Postal / ZIP Code</label>
+              <input
+                type="text"
+                placeholder="e.g. 100001"
+                value={postalCode}
+                onChange={e => setPostalCode(e.target.value)}
+                className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-sm text-slate-100 focus:border-teal-400 outline-none"
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* Module D: Clinical Profile */}
+        <div>
+          <div className="flex items-center gap-2 mb-4 pb-2 border-b border-slate-800">
+            <HeartPulse className="w-4 h-4 text-rose-400" />
+            <h3 className="text-base font-bold text-white">4. Clinical & Biological Profile</h3>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div>
+              <label className="block text-xs font-semibold text-slate-300 mb-1.5">Blood Group</label>
+              <select
+                value={bloodGroup}
+                onChange={e => setBloodGroup(e.target.value)}
+                className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-sm text-slate-100 focus:border-teal-400 outline-none"
+              >
+                <option value="">Select Blood Group</option>
+                {['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'].map(b => (
+                  <option key={b} value={b}>{b}</option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-slate-300 mb-1.5">Genotype</label>
+              <select
+                value={genotype}
+                onChange={e => setGenotype(e.target.value)}
+                className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-sm text-slate-100 focus:border-teal-400 outline-none"
+              >
+                <option value="AA">AA</option>
+                <option value="AS">AS</option>
+                <option value="SS">SS</option>
+                <option value="AC">AC</option>
+                <option value="SC">SC</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-slate-300 mb-1.5">Contact Phone Number *</label>
+              <input
+                type="tel"
+                placeholder="+234..."
+                value={phone}
+                onChange={e => setPhone(e.target.value)}
+                className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-sm text-slate-100 focus:border-teal-400 outline-none"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-slate-300 mb-1.5">Emergency Contact Hotline</label>
+              <input
+                type="text"
+                placeholder="Name & emergency phone"
+                value={emergencyContact}
+                onChange={e => setEmergencyContact(e.target.value)}
+                className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-sm text-slate-100 focus:border-teal-400 outline-none"
+              />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-3">
+            <div>
+              <label className="block text-xs font-semibold text-slate-300 mb-1.5">Known Allergies (Medications / Food)</label>
+              <textarea
+                rows={2}
+                value={allergies}
+                onChange={e => setAllergies(e.target.value)}
+                placeholder="e.g. Penicillin, Aspirin, Seafood, Peanuts..."
+                className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-sm text-slate-100 focus:border-teal-400 outline-none resize-none"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-300 mb-1.5">Pre-existing & Chronic Medical Conditions</label>
+              <textarea
+                rows={2}
+                value={chronicConditions}
+                onChange={e => setChronicConditions(e.target.value)}
+                placeholder="e.g. Asthma, Hypertension, Peptic Ulcer, Diabetes..."
+                className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-sm text-slate-100 focus:border-teal-400 outline-none resize-none"
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* Module E: Next of Kin Dossier (Where your next of kin lives) */}
+        <div>
+          <div className="flex items-center gap-2 mb-4 pb-2 border-b border-slate-800">
+            <Users className="w-4 h-4 text-indigo-400" />
+            <h3 className="text-base font-bold text-white">5. Next of Kin Dossier (Where Next of Kin Lives)</h3>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div>
+              <label className="block text-xs font-semibold text-slate-300 mb-1.5">Next of Kin Full Name *</label>
+              <input
+                type="text"
+                placeholder="Full Legal Name"
+                value={nextOfKinName}
+                onChange={e => setNextOfKinName(e.target.value)}
+                className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-sm text-slate-100 focus:border-teal-400 outline-none"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-slate-300 mb-1.5">Relationship *</label>
+              <select
+                value={nextOfKinRelationship}
+                onChange={e => setNextOfKinRelationship(e.target.value)}
+                className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-sm text-slate-100 focus:border-teal-400 outline-none"
+              >
+                <option value="Spouse">Spouse</option>
+                <option value="Parent">Parent (Mother / Father)</option>
+                <option value="Sibling">Sibling (Brother / Sister)</option>
+                <option value="Child">Child (Son / Daughter)</option>
+                <option value="Guardian">Legal Guardian</option>
+                <option value="Relative">Relative / Family Member</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-slate-300 mb-1.5">Next of Kin Phone Number *</label>
+              <input
+                type="tel"
+                placeholder="Phone number"
+                value={nextOfKinPhone}
+                onChange={e => setNextOfKinPhone(e.target.value)}
+                className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-sm text-slate-100 focus:border-teal-400 outline-none"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-slate-300 mb-1.5">Next of Kin Email</label>
+              <input
+                type="email"
+                placeholder="email@domain.com"
+                value={nextOfKinEmail}
+                onChange={e => setNextOfKinEmail(e.target.value)}
+                className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-sm text-slate-100 focus:border-teal-400 outline-none"
+              />
+            </div>
+
+            <div className="sm:col-span-2">
+              <label className="block text-xs font-semibold text-slate-300 mb-1.5">Next of Kin Residential Street Address *</label>
+              <input
+                type="text"
+                placeholder="Where does your next of kin reside?"
+                value={nextOfKinAddress}
+                onChange={e => setNextOfKinAddress(e.target.value)}
+                className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-sm text-slate-100 focus:border-teal-400 outline-none"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-slate-300 mb-1.5">Next of Kin City / Town</label>
+              <input
+                type="text"
+                placeholder="City / Town"
+                value={nextOfKinCity}
+                onChange={e => setNextOfKinCity(e.target.value)}
+                className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-sm text-slate-100 focus:border-teal-400 outline-none"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-slate-300 mb-1.5">Next of Kin State & Country</label>
+              <input
+                type="text"
+                placeholder="State, Country (e.g. Lagos, Nigeria)"
+                value={nextOfKinState ? `${nextOfKinState}, ${nextOfKinCountry}` : nextOfKinCountry}
+                onChange={e => {
+                  const parts = e.target.value.split(',');
+                  setNextOfKinState(parts[0]?.trim() || '');
+                  if (parts[1]) setNextOfKinCountry(parts[1].trim());
+                }}
+                className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-sm text-slate-100 focus:border-teal-400 outline-none"
+              />
+            </div>
           </div>
         </div>
 
@@ -3152,10 +3497,10 @@ function ProfileSection({
           <button
             type="submit"
             disabled={saving}
-            className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-teal-500 to-cyan-500 hover:from-teal-400 hover:to-cyan-400 text-slate-950 font-bold text-sm shadow-md transition flex items-center gap-2 disabled:opacity-50"
+            className="px-8 py-3 rounded-xl bg-gradient-to-r from-teal-500 to-cyan-500 hover:from-teal-400 hover:to-cyan-400 text-slate-950 font-bold text-sm shadow-xl shadow-teal-500/20 transition flex items-center gap-2 disabled:opacity-50 cursor-pointer"
           >
             {saving ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
-            Save Profile Changes
+            Save Complete Biodata Dossier
           </button>
         </div>
       </form>
@@ -3164,7 +3509,7 @@ function ProfileSection({
 }
 
 // ============================================================================
-// SUB-SECTION 9: ACCESS CONTROL
+// SUB-SECTION 9: ACCESS CONTROL (PATIENT ID CONSENT PROTOCOL)
 // ============================================================================
 
 function AccessControlSection({
@@ -3178,90 +3523,106 @@ function AccessControlSection({
   patientPid: string;
   onShowToast: (t: string, d?: string, tp?: 'success' | 'info' | 'error') => void;
 }) {
-  const [accessPin, setAccessPin] = useState<string>(() => getPatientAccessPin(userId));
   const [authorizedDoctors, setAuthorizedDoctors] = useState<AuthorizedDoctor[]>(() => getAuthorizedDoctors(userId));
   const [copied, setCopied] = useState(false);
+  const [isAddingTestDoctor, setIsAddingTestDoctor] = useState(false);
 
-  // Keep authorized doctors list in sync
+  // Sync authorized doctors from Supabase cloud
   useEffect(() => {
-    setAuthorizedDoctors(getAuthorizedDoctors(userId));
+    let active = true;
+    fetchAuthorizedDoctorsCloud(userId).then(docs => {
+      if (active) setAuthorizedDoctors(docs);
+    });
     const interval = setInterval(() => {
-      setAuthorizedDoctors(getAuthorizedDoctors(userId));
-    }, 2000);
-    return () => clearInterval(interval);
+      fetchAuthorizedDoctorsCloud(userId).then(docs => {
+        if (active) setAuthorizedDoctors(docs);
+      });
+    }, 4000);
+    return () => {
+      active = false;
+      clearInterval(interval);
+    };
   }, [userId]);
 
   const handleCopyCode = async () => {
     try {
-      await navigator.clipboard.writeText(accessPin);
+      await navigator.clipboard.writeText(patientPid);
       setCopied(true);
       setTimeout(() => setCopied(false), 3000);
       onShowToast(
-        'Access Code Copied',
-        `PIN ${accessPin} copied to clipboard. Share this with your attending physician.`,
+        'Patient ID Copied',
+        `Patient ID ${patientPid} copied to clipboard. Share this with your attending physician.`,
         'success'
       );
     } catch {
-      onShowToast('Copy Code', `PIN: ${accessPin}`, 'info');
+      onShowToast('Copy Code', `Patient ID: ${patientPid}`, 'info');
     }
   };
 
-  const handleRegenerateCode = () => {
-    if (!window.confirm('Regenerating your PIN will invalidate any previous access code you shared with doctors. Continue?')) {
-      return;
-    }
-    const newCode = regeneratePatientAccessPin(userId, {
-      patientName,
-      patientPid,
-    });
-    setAccessPin(newCode);
-    onShowToast('PIN Regenerated', `Your new Doctor Access Code is ${newCode}.`, 'success');
-  };
-
-  const handleRevokeDoctor = (doctorId: string, doctorName: string) => {
+  const handleRevokeDoctor = async (doctorId: string, doctorName: string) => {
     const ok = window.confirm(
-      `Revoke all clinical access for ${doctorName}? They will immediately lose access to your vitals, EMR records, and scans.`
+      `Revoke all clinical access for ${doctorName}? They will immediately lose access to your vitals, EMR records, and diagnostic scans.`
     );
     if (!ok) return;
 
-    revokeDoctorAccess(userId, doctorId);
-    setAuthorizedDoctors(getAuthorizedDoctors(userId));
-    onShowToast('Access Revoked', `All healthcare permissions revoked for ${doctorName}.`, 'info');
+    await revokeDoctorAccess(userId, doctorId);
+    const updated = await fetchAuthorizedDoctorsCloud(userId);
+    setAuthorizedDoctors(updated);
+    onShowToast('Access Revoked', `Doctor tenure ended for ${doctorName}. Access instantly terminated.`, 'info');
+  };
+
+  const handleAddTestDoctor = async () => {
+    setIsAddingTestDoctor(true);
+    const testDoc = {
+      doctorId: `doc-active-${Date.now()}`,
+      doctorName: 'Dr. Sarah Adebayo, FWACP',
+      hospital: 'Federal Medical Center / Vitalia Clinical Network',
+      specialization: 'Chief Consultant Cardiologist',
+    };
+    const updated = await addAuthorizedDoctor(userId, testDoc);
+    setAuthorizedDoctors(updated);
+    setIsAddingTestDoctor(false);
+    onShowToast(
+      'Doctor Linked to Your Record',
+      'Dr. Sarah Adebayo has been granted clinical access. You can test the "Revoke Access" button below to verify tenure termination.',
+      'success'
+    );
   };
 
   return (
     <div className="space-y-6">
       {/* Header */}
       <div>
-        <h2 className="text-xl font-bold text-white">Digital Health Privacy & Access Control</h2>
+        <h2 className="text-xl font-bold text-white">Digital Health Privacy & Sovereign Clinician Access</h2>
         <p className="text-xs text-slate-400 mt-0.5">
-          Zero-trust clinical consent: Physicians cannot search or browse your profile publicly. They must enter your private 6-digit Doctor Access PIN.
+          Zero-trust clinical consent: Physicians cannot search or browse your profile publicly. All they need is your permanent <strong>Patient ID</strong>.
         </p>
       </div>
 
-      {/* Private Doctor Access PIN Card */}
+      {/* Patient ID Access Card */}
       <div className="rounded-3xl bg-gradient-to-br from-cyan-950/40 via-slate-900/80 to-slate-950 border border-cyan-500/30 p-6 sm:p-8 backdrop-blur-xl shadow-xl space-y-6 relative overflow-hidden">
         <div className="absolute top-0 right-0 w-80 h-80 bg-cyan-500/5 rounded-full blur-3xl pointer-events-none" />
 
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div className="space-y-1">
             <span className="text-[11px] font-mono uppercase tracking-wider text-cyan-400 font-semibold flex items-center gap-1.5">
-              <Key className="w-3.5 h-3.5" /> Private Clinician Access PIN
+              <Key className="w-3.5 h-3.5" /> Permanent Clinician Access Key
             </span>
-            <h3 className="text-lg font-bold text-white">Your Sovereign Patient Access Code</h3>
+            <h3 className="text-lg font-bold text-white">Your Sovereign Patient ID</h3>
             <p className="text-xs text-slate-400 max-w-xl">
-              Provide this code directly to your doctor or hospital clinic. Once entered into their clinical workstation, they will be granted read access to your vitals stream, medical history, and CT/X-Ray scans.
+              Provide this Patient ID directly to your doctor or hospital clinic. Once entered into their clinical workstation, they will be granted access to your vitals stream, medical history, and CT/X-Ray scans until you revoke it.
             </p>
           </div>
 
           <div className="flex items-center gap-2 self-start sm:self-auto">
             <button
-              onClick={handleRegenerateCode}
-              className="px-3 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 text-xs font-semibold transition flex items-center gap-1.5"
-              title="Generate a new PIN and invalidate previous codes"
+              onClick={handleAddTestDoctor}
+              disabled={isAddingTestDoctor}
+              className="px-3.5 py-2 rounded-xl bg-teal-500/10 hover:bg-teal-500/20 text-teal-300 border border-teal-500/30 text-xs font-semibold transition flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+              title="Add a test doctor to verify the Revoke Access kill switch"
             >
-              <RefreshCw className="w-3.5 h-3.5" />
-              <span>Regenerate PIN</span>
+              <Stethoscope className="w-3.5 h-3.5" />
+              <span>Link Test Doctor</span>
             </button>
           </div>
         </div>
@@ -3269,19 +3630,19 @@ function AccessControlSection({
         {/* Big Monospace Display Box */}
         <div className="p-6 rounded-2xl bg-black/60 border border-cyan-500/40 flex flex-col sm:flex-row items-center justify-between gap-4 shadow-inner">
           <div className="space-y-1 text-center sm:text-left">
-            <span className="text-[10px] uppercase font-mono tracking-widest text-slate-500">Active Access Code</span>
+            <span className="text-[10px] uppercase font-mono tracking-widest text-slate-500">Permanent Patient ID</span>
             <div className="text-3xl sm:text-4xl font-mono font-black tracking-widest bg-gradient-to-r from-cyan-400 via-teal-300 to-white bg-clip-text text-transparent select-all">
-              {accessPin}
+              {patientPid}
             </div>
           </div>
 
           <div className="flex items-center gap-3">
             <button
               onClick={handleCopyCode}
-              className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-teal-500 to-cyan-500 hover:from-teal-400 hover:to-cyan-400 text-slate-950 font-bold text-xs shadow-lg shadow-cyan-950/50 transition flex items-center gap-2"
+              className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-teal-500 to-cyan-500 hover:from-teal-400 hover:to-cyan-400 text-slate-950 font-bold text-xs shadow-lg shadow-cyan-950/50 transition flex items-center gap-2 cursor-pointer"
             >
               {copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
-              <span>{copied ? 'Copied to Clipboard' : 'Copy Access Code'}</span>
+              <span>{copied ? 'Copied to Clipboard' : 'Copy Patient ID'}</span>
             </button>
           </div>
         </div>
@@ -3308,7 +3669,7 @@ function AccessControlSection({
             <Trash2 className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
             <div>
               <p className="font-semibold text-slate-200">Instant Kill Switch</p>
-              <p className="text-[11px] text-slate-500 mt-0.5">Revoking a doctor immediately disconnects their clinical session and closes their view.</p>
+              <p className="text-[11px] text-slate-500 mt-0.5">Revoking a doctor immediately disconnects their clinical session and shuts their view.</p>
             </div>
           </div>
         </div>
@@ -3319,7 +3680,7 @@ function AccessControlSection({
         <div className="flex items-center justify-between">
           <h3 className="text-base font-bold text-white flex items-center gap-2">
             <span>Currently Authorized Clinicians</span>
-            <span className="text-xs font-mono font-normal px-2 py-0.5 rounded-full bg-slate-800 text-slate-400">
+            <span className="text-xs font-mono font-normal px-2.5 py-0.5 rounded-full bg-slate-800 text-teal-400 border border-slate-700">
               {authorizedDoctors.length} Active
             </span>
           </h3>
@@ -3339,7 +3700,7 @@ function AccessControlSection({
                     <span className="text-xs text-teal-400 font-medium">({doc.specialization})</span>
                   </div>
                   <p className="text-xs text-slate-400">
-                    {doc.hospital} • Authorized: {doc.authorizedAt}
+                    {doc.hospital} • Linked On: {doc.authorizedAt}
                   </p>
 
                   {/* Active Permission Badges */}
@@ -3359,22 +3720,32 @@ function AccessControlSection({
                 <div className="flex items-center gap-3">
                   <button
                     onClick={() => handleRevokeDoctor(doc.doctorId, doc.doctorName)}
-                    className="px-4 py-2 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/30 text-xs font-semibold transition flex items-center gap-1.5 self-start md:self-auto cursor-pointer"
+                    className="px-4 py-2 rounded-xl bg-rose-500/15 hover:bg-rose-500/25 text-rose-300 border border-rose-500/30 text-xs font-bold transition flex items-center gap-1.5 self-start md:self-auto cursor-pointer shadow-sm"
                   >
                     <Trash2 className="w-3.5 h-3.5" />
-                    <span>Revoke Access</span>
+                    <span>Revoke Access / End Tenure</span>
                   </button>
                 </div>
               </div>
             ))}
           </div>
         ) : (
-          <div className="p-12 rounded-3xl bg-slate-900/40 border border-slate-800/80 text-center space-y-3">
+          <div className="p-10 rounded-3xl bg-slate-900/40 border border-slate-800/80 text-center space-y-4">
             <ShieldCheck className="w-10 h-10 text-teal-500 mx-auto" />
-            <h4 className="text-base font-semibold text-white">No Clinicians Currently Authorized</h4>
-            <p className="text-xs text-slate-400 max-w-md mx-auto leading-relaxed">
-              Your medical records, vitals, and diagnostic scans are completely private. No doctors or clinics have access. Share your 6-digit access code above when you want a clinician to review your records.
-            </p>
+            <div>
+              <h4 className="text-base font-semibold text-white">No Clinicians Currently Authorized</h4>
+              <p className="text-xs text-slate-400 max-w-md mx-auto leading-relaxed mt-1">
+                Your medical records, vitals, and diagnostic scans are completely private. Give your <strong>Patient ID ({patientPid})</strong> to an attending physician when you want them to review your chart.
+              </p>
+            </div>
+            <button
+              onClick={handleAddTestDoctor}
+              disabled={isAddingTestDoctor}
+              className="px-4 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 text-xs font-semibold transition inline-flex items-center gap-2 cursor-pointer"
+            >
+              <Stethoscope className="w-4 h-4 text-teal-400" />
+              <span>Link a Test Doctor to Test Revoke Switch</span>
+            </button>
           </div>
         )}
       </div>

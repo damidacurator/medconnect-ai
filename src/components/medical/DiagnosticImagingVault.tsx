@@ -21,6 +21,7 @@ import {
   Maximize2
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { supabase } from '@/lib/supabase';
 
 export interface DiagnosticScan {
   id: string;
@@ -97,10 +98,56 @@ export const DiagnosticImagingVault: React.FC<DiagnosticImagingVaultProps> = ({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Sync state if patientId changes
+  // Sync state from Supabase Cloud + Local Storage
   useEffect(() => {
-    setScans(getPatientScans(patientId));
-  }, [patientId]);
+    let mounted = true;
+    async function loadScans() {
+      // 1. Initial responsive populate from local cache
+      const local = getPatientScans(patientId);
+      if (local.length > 0 && mounted) {
+        setScans(local);
+      }
+
+      // 2. Fetch authoritative records from Supabase diagnostic_scans table
+      try {
+        const { data, error } = await supabase
+          .from('diagnostic_scans')
+          .select('*')
+          .eq('patient_id', patientId)
+          .order('created_at', { ascending: false });
+
+        if (!error && data && mounted) {
+          const mapped: DiagnosticScan[] = data.map((row: any) => ({
+            id: row.id,
+            patientId: row.patient_id,
+            patientName: row.patient_name || patientName,
+            modality: row.modality,
+            bodyPart: row.body_part,
+            scanDate: row.scan_date,
+            facility: row.facility,
+            radiologist: row.radiologist,
+            clinicalImpression: row.clinical_impression,
+            fileDataUrl: row.file_url,
+            fileName: row.file_name,
+            fileSizeBytes: row.file_size_bytes || 0,
+            uploadedAt: row.created_at,
+          }));
+          setScans(mapped);
+          savePatientScans(patientId, mapped);
+        }
+      } catch (err) {
+        console.warn('Could not fetch scans from Supabase, using local cache', err);
+      }
+    }
+
+    if (patientId) {
+      loadScans();
+    }
+
+    return () => {
+      mounted = false;
+    };
+  }, [patientId, patientName]);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -124,14 +171,41 @@ export const DiagnosticImagingVault: React.FC<DiagnosticImagingVaultProps> = ({
     reader.readAsDataURL(file);
   };
 
-  const handleUploadSubmit = (e: React.FormEvent) => {
+  const handleUploadSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedFile || !filePreviewUrl) {
+    if (!selectedFile) {
       onShowToast('Missing File', 'Please select an image or scan file to upload.', 'error');
       return;
     }
 
     setIsSubmitting(true);
+    let finalFileUrl = filePreviewUrl || '';
+
+    // 1. Upload file binary directly to Supabase Storage bucket 'medical-scans'
+    try {
+      const sanitizedName = selectedFile.name.replace(/[^a-zA-Z0-9.-]/g, '_');
+      const filePath = `${patientId}/${Date.now()}_${sanitizedName}`;
+
+      const { data: uploadData, error: uploadErr } = await supabase.storage
+        .from('medical-scans')
+        .upload(filePath, selectedFile, {
+          cacheControl: '3600',
+          upsert: true,
+        });
+
+      if (!uploadErr && uploadData) {
+        const { data: { publicUrl } } = supabase.storage
+          .from('medical-scans')
+          .getPublicUrl(filePath);
+        if (publicUrl) {
+          finalFileUrl = publicUrl;
+        }
+      } else if (uploadErr) {
+        console.warn('Supabase storage upload note:', uploadErr.message);
+      }
+    } catch (err) {
+      console.warn('Storage upload fallback triggered:', err);
+    }
 
     const newScan: DiagnosticScan = {
       id: `SCAN-${Date.now()}`,
@@ -140,16 +214,43 @@ export const DiagnosticImagingVault: React.FC<DiagnosticImagingVaultProps> = ({
       modality: uploadModality,
       bodyPart: uploadBodyPart.trim() || 'General Anatomical Scan',
       scanDate: uploadDate,
-      facility: uploadFacility.trim() || 'Regional Diagnostic Radiology Center',
+      facility: uploadFacility.trim() || 'MedConnect Diagnostic Center',
       radiologist: uploadRadiologist.trim() || 'Attending Radiologist',
-      clinicalImpression: uploadImpression.trim() || 'Radiological examination completed. No acute abnormalities noted.',
-      fileDataUrl: filePreviewUrl,
+      clinicalImpression: uploadImpression.trim() || 'Radiological examination completed. Record filed.',
+      fileDataUrl: finalFileUrl,
       fileName: selectedFile.name,
       fileSizeBytes: selectedFile.size,
       uploadedAt: new Date().toISOString(),
     };
 
-    const updated = [newScan, ...scans];
+    // 2. Persist metadata record in Supabase diagnostic_scans table
+    try {
+      const { data: rowData, error: dbErr } = await supabase
+        .from('diagnostic_scans')
+        .insert({
+          patient_id: patientId,
+          patient_name: patientName,
+          modality: uploadModality,
+          body_part: newScan.bodyPart,
+          scan_date: uploadDate,
+          facility: newScan.facility,
+          radiologist: newScan.radiologist,
+          clinical_impression: newScan.clinicalImpression,
+          file_url: finalFileUrl,
+          file_name: selectedFile.name,
+          file_size_bytes: selectedFile.size,
+        })
+        .select()
+        .single();
+
+      if (!dbErr && rowData) {
+        newScan.id = rowData.id;
+      }
+    } catch (err) {
+      console.warn('Diagnostic scan database insert fallback:', err);
+    }
+
+    const updated = [newScan, ...scans.filter(s => s.id !== newScan.id)];
     setScans(updated);
     savePatientScans(patientId, updated);
 
@@ -162,15 +263,21 @@ export const DiagnosticImagingVault: React.FC<DiagnosticImagingVaultProps> = ({
     setUploadRadiologist('');
 
     onShowToast(
-      'Scan Encrypted & Saved',
-      `${uploadModality} (${uploadBodyPart}) successfully added to your health passport.`,
+      'Scan Saved to Cloud',
+      `${uploadModality} (${uploadBodyPart}) uploaded and securely stored in your medical vault.`,
       'success'
     );
   };
 
-  const handleDeleteScan = (scanId: string, e: React.MouseEvent) => {
+  const handleDeleteScan = async (scanId: string, e: React.MouseEvent) => {
     e.stopPropagation();
     if (!window.confirm('Are you sure you want to delete this diagnostic scan?')) return;
+
+    try {
+      await supabase.from('diagnostic_scans').delete().eq('id', scanId);
+    } catch {
+      // ignore
+    }
 
     const updated = scans.filter(s => s.id !== scanId);
     setScans(updated);

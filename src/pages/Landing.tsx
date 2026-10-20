@@ -268,28 +268,77 @@ export const Landing: React.FC = () => {
             MedConnect AI breaks healthcare silos. Patients retain lifelong universal medical records, clinicians leverage instant diagnostic intelligence, and healthcare institutions streamline operations in real time.
           </motion.p>
 
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.6, delay: 0.3 }}
-            className="mt-10 flex flex-col sm:flex-row items-center justify-center gap-4"
-          >
-            <button
-              type="button"
-              onClick={() => handleOpenAuth('signup', 'patient')}
-              className="w-full sm:w-auto px-8 py-4 rounded-xl font-bold text-base bg-gradient-to-r from-cyan-500 to-teal-400 text-slate-950 hover:from-cyan-400 hover:to-teal-300 shadow-xl shadow-cyan-500/20 transition-all duration-200 flex items-center justify-center space-x-2 group"
-            >
-              <span>Create Free Patient Account</span>
-              <ArrowRight className="w-5 h-5 group-hover:translate-x-0.5 transition-transform" />
-            </button>
-            <button
-              type="button"
-              onClick={() => handleOpenAuth('signin')}
-              className="w-full sm:w-auto px-8 py-4 rounded-xl font-semibold text-base text-slate-200 hover:text-white bg-slate-900/60 hover:bg-slate-800/80 border border-white/10 transition-all duration-200 backdrop-blur-md"
-            >
-              Sign In to Your Workspace
-            </button>
-          </motion.div>
+          {/* Three Portals Grid - Directly in Front Page Hero */}
+          <div className="mt-12 grid grid-cols-1 md:grid-cols-3 gap-6 sm:gap-8 text-left">
+            {roleCards.map((card, idx) => {
+              const Icon = card.icon;
+              return (
+                <motion.div
+                  key={card.role}
+                  initial={{ opacity: 0, y: 30 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.5, delay: idx * 0.12 }}
+                  className={cn(
+                    'relative rounded-2xl p-6 sm:p-7 flex flex-col justify-between transition-all duration-300',
+                    'bg-slate-900/80 backdrop-blur-xl border border-white/10 shadow-2xl group',
+                    card.borderGlow
+                  )}
+                >
+                  <div>
+                    {/* Role Header */}
+                    <div className="flex items-center justify-between mb-5">
+                      <div className="w-13 h-13 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center text-cyan-400 group-hover:scale-105 group-hover:bg-cyan-500/10 transition-all duration-300">
+                        <Icon className="w-6 h-6" />
+                      </div>
+                      <span className="text-[11px] font-semibold uppercase tracking-wider px-3 py-1 rounded-full bg-cyan-500/10 text-cyan-300 border border-cyan-500/20">
+                        {card.badge}
+                      </span>
+                    </div>
+
+                    <h4 className="text-xl sm:text-2xl font-bold text-white mb-2.5">
+                      {card.title}
+                    </h4>
+                    <p className="text-xs sm:text-sm text-slate-400 leading-relaxed mb-5">
+                      {card.description}
+                    </p>
+
+                    {/* Features list */}
+                    <div className="space-y-2 mb-6">
+                      {card.features.map((feat) => (
+                        <div key={feat} className="flex items-center space-x-2 text-xs text-slate-300">
+                          <CheckCircle2 className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
+                          <span>{feat}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Role CTA */}
+                  <div className="space-y-2.5 pt-2">
+                    <button
+                      type="button"
+                      onClick={() => handleOpenAuth('signup', card.role)}
+                      className={cn(
+                        'w-full py-3 px-4 rounded-xl font-bold text-sm transition-all duration-200 flex items-center justify-center space-x-2 shadow-lg cursor-pointer',
+                        card.buttonBg
+                      )}
+                    >
+                      <span>Get Started as {card.title.replace('For ', '')}</span>
+                      <ArrowRight className="w-4 h-4" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleOpenAuth('signin', card.role)}
+                      className="w-full py-2.5 px-3 rounded-xl text-xs font-semibold text-slate-300 hover:text-white bg-white/5 hover:bg-white/10 border border-white/10 transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
+                    >
+                      <span>Sign In as {card.title.replace('For ', '')}</span>
+                      <ArrowRight className="w-3.5 h-3.5 opacity-60" />
+                    </button>
+                  </div>
+                </motion.div>
+              );
+            })}
+          </div>
 
           {/* Trust Highlights */}
           <motion.div
@@ -315,93 +364,6 @@ export const Landing: React.FC = () => {
               <div className="text-xs sm:text-sm text-slate-400 mt-1">Clinical Support Engine</div>
             </div>
           </motion.div>
-        </section>
-
-        {/* ROLE CARDS SECTION */}
-        <section className="py-16 sm:py-24 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto">
-          <div className="text-center max-w-3xl mx-auto mb-16">
-            <h2 className="text-xs sm:text-sm font-bold tracking-widest uppercase text-cyan-400 mb-2">
-              Tailored Portals
-            </h2>
-            <h3 className="text-3xl sm:text-4xl font-extrabold text-white tracking-tight">
-              Built for Every Pillar of Modern Healthcare
-            </h3>
-            <p className="mt-3 text-slate-400 text-sm sm:text-base">
-              Select your role below to access tailored dashboards, workflows, and clinical tooling.
-            </p>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-            {roleCards.map((card, idx) => {
-              const Icon = card.icon;
-              return (
-                <motion.div
-                  key={card.role}
-                  initial={{ opacity: 0, y: 30 }}
-                  whileInView={{ opacity: 1, y: 0 }}
-                  viewport={{ once: true }}
-                  transition={{ duration: 0.5, delay: idx * 0.15 }}
-                  className={cn(
-                    'relative rounded-2xl p-7 flex flex-col justify-between transition-all duration-300',
-                    'bg-slate-900/60 backdrop-blur-xl border border-white/10 shadow-xl group',
-                    card.borderGlow
-                  )}
-                >
-                  <div>
-                    {/* Role Header */}
-                    <div className="flex items-center justify-between mb-6">
-                      <div className="w-14 h-14 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center text-cyan-400 group-hover:scale-105 group-hover:bg-cyan-500/10 transition-all duration-300">
-                        <Icon className="w-7 h-7" />
-                      </div>
-                      <span className="text-[11px] font-semibold uppercase tracking-wider px-3 py-1 rounded-full bg-cyan-500/10 text-cyan-300 border border-cyan-500/20">
-                        {card.badge}
-                      </span>
-                    </div>
-
-                    <h4 className="text-2xl font-bold text-white mb-3">
-                      {card.title}
-                    </h4>
-                    <p className="text-sm text-slate-400 leading-relaxed mb-6">
-                      {card.description}
-                    </p>
-
-                    {/* Features list */}
-                    <div className="space-y-2.5 mb-8">
-                      {card.features.map((feat) => (
-                        <div key={feat} className="flex items-center space-x-2.5 text-xs sm:text-sm text-slate-300">
-                          <CheckCircle2 className="w-4 h-4 text-cyan-400 shrink-0" />
-                          <span>{feat}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* Role CTA */}
-                  <div className="space-y-2.5">
-                    <button
-                      type="button"
-                      onClick={() => handleOpenAuth('signup', card.role)}
-                      className={cn(
-                        'w-full py-3.5 px-4 rounded-xl font-bold text-sm transition-all duration-200 flex items-center justify-center space-x-2 shadow-lg',
-                        card.buttonBg
-                      )}
-                    >
-                      <span>Get Started as {card.title.replace('For ', '')}</span>
-                      <ArrowRight className="w-4 h-4" />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleOpenAuth('signin', card.role)}
-                      className="w-full py-2.5 px-3 rounded-xl text-xs font-semibold text-slate-300 hover:text-white bg-white/5 hover:bg-white/10 border border-white/10 transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
-                    >
-                      <span>Sign In as {card.title.replace('For ', '')}</span>
-                      <ArrowRight className="w-3.5 h-3.5 opacity-60" />
-                    </button>
-                  </div>
-                </motion.div>
-              );
-            })}
-          </div>
         </section>
 
         {/* FEATURES GRID SECTION */}

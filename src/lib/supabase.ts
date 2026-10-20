@@ -415,7 +415,11 @@ export async function updateProfile(
   if (!userId) throw new Error('No user ID provided');
 
   try {
-    const { error } = await supabase.from('profiles').update(updates).eq('id', userId);
+    const { error } = await supabase.from('profiles').upsert({
+      id: userId,
+      ...updates,
+      updated_at: new Date().toISOString(),
+    });
     if (!error) return;
   } catch {
     // fallback

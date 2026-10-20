@@ -228,7 +228,7 @@ export function DoctorDashboard() {
   const handleUnlockWithPin = (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     if (!pinInput.trim()) {
-      showToast('Please enter the patient’s 6-digit Doctor Access PIN.');
+      showToast('Please enter the patient’s unique Patient ID (e.g. PID-9B2F4C1A).');
       return;
     }
     setIsUnlocking(true);
@@ -738,10 +738,10 @@ export function DoctorDashboard() {
           <div className="flex items-center gap-3">
             <button
               onClick={() => setIsUnlockModalOpen(true)}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 font-semibold text-xs transition"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 font-semibold text-xs transition cursor-pointer"
             >
               <Key className="w-3.5 h-3.5" />
-              <span>Unlock Patient PIN</span>
+              <span>Access Patient via ID</span>
             </button>
 
             <button
@@ -938,7 +938,7 @@ export function DoctorDashboard() {
         </div>
 
         {/* ==================================================================== */}
-        {/* UNLOCK PATIENT VIA 6-DIGIT CONSENT PIN MODAL                         */}
+        {/* UNLOCK PATIENT VIA PATIENT ID MODAL                                  */}
         {/* ==================================================================== */}
         <AnimatePresence>
           {isUnlockModalOpen && (
@@ -952,7 +952,7 @@ export function DoctorDashboard() {
                 <div className="flex items-center justify-between pb-3 border-b border-white/10">
                   <div className="flex items-center gap-2.5">
                     <Key className="w-5 h-5 text-cyan-400" />
-                    <h3 className="text-base font-bold text-white">Unlock Patient Records</h3>
+                    <h3 className="text-base font-bold text-white">Access Patient Medical Record</h3>
                   </div>
                   <button
                     onClick={() => {
@@ -967,21 +967,21 @@ export function DoctorDashboard() {
 
                 <div className="space-y-3 text-xs">
                   <div className="p-3.5 rounded-2xl bg-cyan-500/10 border border-cyan-500/20 text-cyan-300 leading-relaxed">
-                    <p className="font-semibold mb-0.5">Zero-Trust Consent Security</p>
-                    Per clinical confidentiality regulations, patient records cannot be searched publicly. Have the patient open their <strong>Access Control</strong> tab and provide their active 6-digit Doctor Access PIN (e.g. <span className="font-mono font-bold">MED-849201</span>).
+                    <p className="font-semibold mb-0.5">Sovereign Patient-Consent Access</p>
+                    Per clinical privacy regulations, patient records cannot be browsed publicly. Enter the patient's unique <strong>Patient ID</strong> (displayed prominently at the top of the patient's overview page, e.g. <span className="font-mono font-bold">PID-9B2F4C1A</span>) to link and access their vitals and imaging records.
                   </div>
 
                   <form onSubmit={handleUnlockWithPin} className="space-y-4 pt-2">
                     <div>
                       <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-                        Patient Access Code (PIN) *
+                        Patient ID (PID) *
                       </label>
                       <div className="relative">
                         <input
                           type="text"
                           required
                           autoFocus
-                          placeholder="e.g. MED-849201"
+                          placeholder="e.g. PID-9B2F4C1A"
                           value={pinInput}
                           onChange={e => setPinInput(e.target.value.toUpperCase())}
                           className="w-full px-4 py-3 rounded-xl bg-black/60 border border-cyan-500/40 text-white font-mono text-base tracking-wider focus:outline-none focus:border-cyan-400 placeholder:text-slate-600 uppercase"
@@ -1004,10 +1004,10 @@ export function DoctorDashboard() {
                       <button
                         type="submit"
                         disabled={isUnlocking || !pinInput.trim()}
-                        className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-teal-500 to-cyan-500 hover:from-teal-400 hover:to-cyan-400 text-slate-950 font-bold transition shadow-lg shadow-teal-500/20 disabled:opacity-50 flex items-center gap-2"
+                        className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-teal-500 to-cyan-500 hover:from-teal-400 hover:to-cyan-400 text-slate-950 font-bold transition shadow-lg shadow-teal-500/20 disabled:opacity-50 flex items-center gap-2 cursor-pointer"
                       >
                         <Unlock className="w-4 h-4" />
-                        <span>{isUnlocking ? 'Verifying...' : 'Unlock Patient Records'}</span>
+                        <span>{isUnlocking ? 'Connecting...' : 'Access Patient Records'}</span>
                       </button>
                     </div>
                   </form>
