@@ -14,7 +14,7 @@ import {
   User,
 } from 'lucide-react';
 import { GlassModal } from '@/components/shared/GlassModal';
-import { signIn, signUp, resetPassword, type UserRole } from '@/lib/supabase';
+import { supabase, signIn, signUp, resetPassword, signOut as sbSignOut, type UserRole } from '@/lib/supabase';
 import { cn } from '@/lib/utils';
 
 export type AuthMode = 'signin' | 'signup' | 'forgotPassword';
@@ -121,8 +121,33 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       if (mode === 'signin') {
         if (!email.trim() || !password) throw new Error('Please provide your email and password.');
         const data = await signIn(email.trim(), password);
-        const resolvedRole = (data.user?.user_metadata?.role as UserRole) || role;
-        onLogin?.(resolvedRole);
+        if (!data.user) throw new Error('Sign in failed. No user record returned.');
+
+        // Verify registered role from profiles or metadata
+        let registeredRole: UserRole = (data.user.user_metadata?.role as UserRole) || 'patient';
+        try {
+          const { data: profileRow } = await supabase
+            .from('profiles')
+            .select('role')
+            .eq('id', data.user.id)
+            .single();
+          if (profileRow?.role) {
+            registeredRole = profileRow.role as UserRole;
+          }
+        } catch {
+          // fallback to metadata role
+        }
+
+        // Strict role check: Do not allow crossing roles with the same account
+        if (role && registeredRole !== role) {
+          await sbSignOut();
+          setRole(registeredRole);
+          throw new Error(
+            `You do not have a ${role} account. This email is registered as a ${registeredRole} account. We have switched your portal selection to ${registeredRole.toUpperCase()} — please click Sign In now to proceed, or use a separate email for other roles.`
+          );
+        }
+
+        onLogin?.(registeredRole);
         onClose();
         return;
       }
@@ -252,9 +277,16 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         {/* Role Selector — shown on signin and signup */}
         {mode !== 'forgotPassword' && (
           <div>
-            <p className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">
-              Account Type
-            </p>
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">
+                {mode === 'signin' ? 'Select Target Portal' : 'Select Account Type'}
+              </p>
+              <span className="text-[11px] font-medium text-cyan-400">
+                {role === 'patient' && 'Patient Portal'}
+                {role === 'doctor' && 'Doctor Workspace'}
+                {role === 'institution' && 'Institution Admin'}
+              </span>
+            </div>
             <div className="grid grid-cols-3 gap-2">
               {roleOptions.map((opt) => {
                 const Icon = opt.icon;

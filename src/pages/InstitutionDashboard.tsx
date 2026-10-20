@@ -250,7 +250,7 @@ const INITIAL_INVENTORY: InventoryItem[] = [
 ];
 
 export function InstitutionDashboard() {
-  const { user, profile, signOut } = useAuth();
+  const { user, profile, loading, isDemo, signOut } = useAuth();
 
   // Active module navigation
   const [activeTab, setActiveTab] = useState<InstitutionTab>('overview');
@@ -261,11 +261,12 @@ export function InstitutionDashboard() {
 
   // Session guard
   useEffect(() => {
+    if (loading) return;
     const demo = localStorage.getItem('medconnect_demo_user');
-    if (!user && !profile && !demo) {
+    if (!user && !profile && !demo && !isDemo) {
       window.location.href = '/';
     }
-  }, [user, profile]);
+  }, [user, profile, loading, isDemo]);
 
   // Facility Metadata
   const [facility, setFacility] = useState<FacilityDetails>(() => {
@@ -620,6 +621,56 @@ export function InstitutionDashboard() {
       ],
     },
   ];
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-[#070b13] flex flex-col items-center justify-center text-slate-200">
+        <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-indigo-500 to-cyan-400 p-0.5 animate-pulse mb-4">
+          <div className="w-full h-full bg-slate-950 rounded-[14px] flex items-center justify-center">
+            <Building2 className="w-6 h-6 text-indigo-400 animate-pulse" />
+          </div>
+        </div>
+        <p className="text-sm font-medium text-slate-400">Loading Enterprise Hospital Operations Center...</p>
+      </div>
+    );
+  }
+
+  // Cross-role guard
+  if (profile && profile.role !== 'institution' && !isDemo) {
+    return (
+      <div className="min-h-screen bg-[#070b13] flex flex-col items-center justify-center text-slate-200 px-4">
+        <div className="max-w-md w-full bg-slate-900/80 border border-red-500/30 rounded-3xl p-8 text-center space-y-4 backdrop-blur-xl">
+          <div className="w-16 h-16 rounded-2xl bg-red-500/10 border border-red-500/20 text-red-400 flex items-center justify-center mx-auto">
+            <AlertTriangle className="w-8 h-8" />
+          </div>
+          <h2 className="text-xl font-bold text-white">Role Mismatch</h2>
+          <p className="text-sm text-slate-400">
+            This account is registered as a <span className="text-indigo-400 font-semibold uppercase">{profile.role}</span>. The Institution Command Center is restricted to verified healthcare institution administrators only.
+          </p>
+          <div className="pt-2 flex flex-col sm:flex-row gap-3">
+            <button
+              onClick={() => {
+                if (profile.role === 'patient') window.location.href = '/patient';
+                else if (profile.role === 'doctor') window.location.href = '/doctor';
+              }}
+              className="flex-1 py-2.5 px-4 rounded-xl font-bold text-sm bg-indigo-500 text-white hover:bg-indigo-400 transition"
+            >
+              Go to {profile.role === 'doctor' ? 'Doctor' : 'Patient'} Portal
+            </button>
+            <button
+              onClick={async () => {
+                await signOut();
+                window.location.href = '/';
+              }}
+              className="py-2.5 px-4 rounded-xl font-bold text-sm bg-white/5 text-slate-300 hover:bg-white/10 border border-white/10 transition"
+            >
+              Sign Out
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col lg:flex-row antialiased font-sans selection:bg-teal-500 selection:text-slate-950">

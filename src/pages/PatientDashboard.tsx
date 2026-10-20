@@ -34,7 +34,9 @@ import {
   Trash2,
   Lock,
   Stethoscope,
-  Info
+  Info,
+  Copy,
+  Key
 } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import {
@@ -51,6 +53,15 @@ import {
   type VitalsData
 } from '@/lib/supabase';
 import { cn } from '@/lib/utils';
+import { DiagnosticImagingVault } from '@/components/medical/DiagnosticImagingVault';
+import {
+  getPatientAccessPin,
+  regeneratePatientAccessPin,
+  getAuthorizedDoctors,
+  revokeDoctorAccess,
+  registerOrUpdatePatientAccess,
+  type AuthorizedDoctor,
+} from '@/lib/accessControl';
 
 // ============================================================================
 // TYPES & DATA STRUCTURES
@@ -59,6 +70,7 @@ import { cn } from '@/lib/utils';
 type SectionId =
   | 'overview'
   | 'records'
+  | 'imaging'
   | 'symptoms'
   | 'vitals'
   | 'appointments'
@@ -165,6 +177,7 @@ interface AccessRule {
 const SIDEBAR_ITEMS: SidebarItem[] = [
   { id: 'overview', label: 'Overview', icon: Activity },
   { id: 'records', label: 'My Records', icon: FileText },
+  { id: 'imaging', label: 'Diagnostic Scans', icon: Eye },
   { id: 'symptoms', label: 'Log Symptoms', icon: AlertCircle },
   { id: 'vitals', label: 'Vitals', icon: HeartPulse },
   { id: 'appointments', label: 'Appointments', icon: Calendar },
@@ -206,7 +219,7 @@ const BODY_LOCATIONS = [
 // ============================================================================
 
 export function PatientDashboard() {
-  const { user, profile, signOut, refreshProfile } = useAuth();
+  const { user, profile, loading, isDemo, signOut, refreshProfile } = useAuth();
   const [activeSection, setActiveSection] = useState<SectionId>('overview');
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
@@ -214,9 +227,25 @@ export function PatientDashboard() {
 
   // If not authenticated, return to home
   useEffect(() => {
+    if (loading) return;
     const demo = localStorage.getItem('medconnect_demo_user');
-    if (!user && !profile && !demo) {
+    if (!user && !profile && !demo && !isDemo) {
       window.location.href = '/';
+    }
+  }, [user, profile, loading, isDemo]);
+
+  // Sync with consent access registry
+  useEffect(() => {
+    if (user?.id) {
+      registerOrUpdatePatientAccess({
+        patientId: user.id,
+        patientName: profile?.full_name || (user.user_metadata?.full_name as string) || 'Patient User',
+        email: user.email || '',
+        gender: (profile?.metadata as any)?.gender,
+        age: (profile?.metadata as any)?.age,
+        bloodGroup: (profile?.metadata as any)?.blood_group,
+        phone: profile?.phone,
+      });
     }
   }, [user, profile]);
 
@@ -327,6 +356,56 @@ export function PatientDashboard() {
   };
 
   const patientDisplayName = profile?.full_name || user?.user_metadata?.full_name || user?.email?.split('@')[0] || 'there';
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-[#070b13] flex flex-col items-center justify-center text-slate-200">
+        <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-cyan-500 to-teal-400 p-0.5 animate-pulse mb-4">
+          <div className="w-full h-full bg-slate-950 rounded-[14px] flex items-center justify-center">
+            <Activity className="w-6 h-6 text-cyan-400 animate-spin" />
+          </div>
+        </div>
+        <p className="text-sm font-medium text-slate-400">Loading Patient Health Passport...</p>
+      </div>
+    );
+  }
+
+  // Cross-role guard
+  if (profile && profile.role !== 'patient' && !isDemo) {
+    return (
+      <div className="min-h-screen bg-[#070b13] flex flex-col items-center justify-center text-slate-200 px-4">
+        <div className="max-w-md w-full bg-slate-900/80 border border-red-500/30 rounded-3xl p-8 text-center space-y-4 backdrop-blur-xl">
+          <div className="w-16 h-16 rounded-2xl bg-red-500/10 border border-red-500/20 text-red-400 flex items-center justify-center mx-auto">
+            <AlertTriangle className="w-8 h-8" />
+          </div>
+          <h2 className="text-xl font-bold text-white">Role Mismatch</h2>
+          <p className="text-sm text-slate-400">
+            This account is registered as a <span className="text-cyan-400 font-semibold uppercase">{profile.role}</span>. The Patient Portal is restricted to patient accounts only.
+          </p>
+          <div className="pt-2 flex flex-col sm:flex-row gap-3">
+            <button
+              onClick={() => {
+                if (profile.role === 'doctor') window.location.href = '/doctor';
+                else if (profile.role === 'institution') window.location.href = '/institution';
+              }}
+              className="flex-1 py-2.5 px-4 rounded-xl font-bold text-sm bg-cyan-500 text-slate-950 hover:bg-cyan-400 transition"
+            >
+              Go to {profile.role === 'doctor' ? 'Doctor' : 'Institution'} Portal
+            </button>
+            <button
+              onClick={async () => {
+                await signOut();
+                window.location.href = '/';
+              }}
+              className="py-2.5 px-4 rounded-xl font-bold text-sm bg-white/5 text-slate-300 hover:bg-white/10 border border-white/10 transition"
+            >
+              Sign Out
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col md:flex-row antialiased selection:bg-teal-500/30 selection:text-teal-200">
@@ -725,7 +804,19 @@ export function PatientDashboard() {
               )}
 
               {activeSection === 'records' && (
-                <RecordsSection onShowToast={showToast} />
+                <RecordsSection
+                  onShowToast={showToast}
+                  patientId={user?.id || 'patient-1'}
+                  patientName={patientDisplayName}
+                />
+              )}
+
+              {activeSection === 'imaging' && (
+                <DiagnosticImagingVault
+                  patientId={user?.id || 'patient-1'}
+                  patientName={patientDisplayName}
+                  onShowToast={showToast}
+                />
               )}
 
               {activeSection === 'symptoms' && (
@@ -795,7 +886,12 @@ export function PatientDashboard() {
               )}
 
               {activeSection === 'access' && (
-                <AccessControlSection onShowToast={showToast} />
+                <AccessControlSection
+                  userId={user?.id || 'patient-1'}
+                  patientName={patientDisplayName}
+                  patientPid={patientIdCode}
+                  onShowToast={showToast}
+                />
               )}
 
               {activeSection === 'settings' && (
@@ -1184,8 +1280,16 @@ function OverviewSection({
 // SUB-SECTION 2: MY RECORDS (EMR)
 // ============================================================================
 
-function RecordsSection({ onShowToast }: { onShowToast: (t: string, d?: string) => void }) {
-  const [tab, setTab] = useState<'consultations' | 'prescriptions' | 'labs'>('consultations');
+function RecordsSection({
+  onShowToast,
+  patientId,
+  patientName,
+}: {
+  onShowToast: (t: string, d?: string, tp?: 'success' | 'info' | 'error') => void;
+  patientId: string;
+  patientName: string;
+}) {
+  const [tab, setTab] = useState<'consultations' | 'prescriptions' | 'labs' | 'imaging'>('consultations');
   const [searchQuery, setSearchQuery] = useState('');
 
   const [consultationRecords, setConsultationRecords] = useState<MedicalRecord[]>([]);
@@ -1214,7 +1318,7 @@ function RecordsSection({ onShowToast }: { onShowToast: (t: string, d?: string) 
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h2 className="text-xl font-bold text-white">Electronic Medical Records (EMR)</h2>
-          <p className="text-xs text-slate-400">Verified doctor consultations, prescriptions, and lab diagnostics</p>
+          <p className="text-xs text-slate-400">Verified doctor consultations, prescriptions, lab diagnostics, and radiology scans</p>
         </div>
 
         <div className="flex items-center gap-2 p-1 rounded-2xl bg-slate-900 border border-slate-800">
@@ -1244,6 +1348,15 @@ function RecordsSection({ onShowToast }: { onShowToast: (t: string, d?: string) 
             )}
           >
             Lab Results
+          </button>
+          <button
+            onClick={() => setTab('imaging')}
+            className={cn(
+              'px-3.5 py-1.5 rounded-xl text-xs font-semibold transition',
+              tab === 'imaging' ? 'bg-teal-500 text-slate-950 shadow' : 'text-slate-400 hover:text-white'
+            )}
+          >
+            Diagnostic Scans
           </button>
         </div>
       </div>
@@ -1440,6 +1553,15 @@ function RecordsSection({ onShowToast }: { onShowToast: (t: string, d?: string) 
             </div>
           )}
         </div>
+      )}
+
+      {/* Tab 4: Diagnostic Imaging & Scans */}
+      {tab === 'imaging' && (
+        <DiagnosticImagingVault
+          patientId={patientId}
+          patientName={patientName}
+          onShowToast={onShowToast}
+        />
       )}
     </div>
   );
@@ -3045,105 +3167,213 @@ function ProfileSection({
 // SUB-SECTION 9: ACCESS CONTROL
 // ============================================================================
 
-function AccessControlSection({ onShowToast }: { onShowToast: (t: string, d?: string) => void }) {
-  const [rules, setRules] = useState<AccessRule[]>([]);
+function AccessControlSection({
+  userId,
+  patientName,
+  patientPid,
+  onShowToast,
+}: {
+  userId: string;
+  patientName: string;
+  patientPid: string;
+  onShowToast: (t: string, d?: string, tp?: 'success' | 'info' | 'error') => void;
+}) {
+  const [accessPin, setAccessPin] = useState<string>(() => getPatientAccessPin(userId));
+  const [authorizedDoctors, setAuthorizedDoctors] = useState<AuthorizedDoctor[]>(() => getAuthorizedDoctors(userId));
+  const [copied, setCopied] = useState(false);
 
-  const togglePermission = (id: string, key: keyof AccessRule['permissions']) => {
-    setRules(prev =>
-      prev.map(r => {
-        if (r.id === id) {
-          const updated = { ...r.permissions, [key]: !r.permissions[key] };
-          return { ...r, permissions: updated };
-        }
-        return r;
-      })
-    );
-    onShowToast('Permissions Updated', 'Health data sharing scope modified.');
+  // Keep authorized doctors list in sync
+  useEffect(() => {
+    setAuthorizedDoctors(getAuthorizedDoctors(userId));
+    const interval = setInterval(() => {
+      setAuthorizedDoctors(getAuthorizedDoctors(userId));
+    }, 2000);
+    return () => clearInterval(interval);
+  }, [userId]);
+
+  const handleCopyCode = async () => {
+    try {
+      await navigator.clipboard.writeText(accessPin);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 3000);
+      onShowToast(
+        'Access Code Copied',
+        `PIN ${accessPin} copied to clipboard. Share this with your attending physician.`,
+        'success'
+      );
+    } catch {
+      onShowToast('Copy Code', `PIN: ${accessPin}`, 'info');
+    }
   };
 
-  const revokeAccess = (id: string, name: string) => {
-    setRules(prev => prev.filter(r => r.id !== id));
-    onShowToast('Access Revoked', `All healthcare records permissions revoked for ${name}.`);
+  const handleRegenerateCode = () => {
+    if (!window.confirm('Regenerating your PIN will invalidate any previous access code you shared with doctors. Continue?')) {
+      return;
+    }
+    const newCode = regeneratePatientAccessPin(userId, {
+      patientName,
+      patientPid,
+    });
+    setAccessPin(newCode);
+    onShowToast('PIN Regenerated', `Your new Doctor Access Code is ${newCode}.`, 'success');
+  };
+
+  const handleRevokeDoctor = (doctorId: string, doctorName: string) => {
+    const ok = window.confirm(
+      `Revoke all clinical access for ${doctorName}? They will immediately lose access to your vitals, EMR records, and scans.`
+    );
+    if (!ok) return;
+
+    revokeDoctorAccess(userId, doctorId);
+    setAuthorizedDoctors(getAuthorizedDoctors(userId));
+    onShowToast('Access Revoked', `All healthcare permissions revoked for ${doctorName}.`, 'info');
   };
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <h2 className="text-xl font-bold text-white">Digital Health Privacy & Access Control</h2>
-          <p className="text-xs text-slate-400">
-            You own your medical data. Grant, configure, or instantly revoke provider access anytime.
-          </p>
-        </div>
-        <button
-          onClick={() => onShowToast('New Provider', 'Enter Doctor or Clinic License ID to grant verified access.')}
-          className="px-4 py-2 rounded-xl bg-teal-500 hover:bg-teal-400 text-slate-950 font-bold text-xs shadow transition flex items-center gap-1.5 self-start"
-        >
-          <Plus className="w-4 h-4" /> Grant New Access
-        </button>
+      {/* Header */}
+      <div>
+        <h2 className="text-xl font-bold text-white">Digital Health Privacy & Access Control</h2>
+        <p className="text-xs text-slate-400 mt-0.5">
+          Zero-trust clinical consent: Physicians cannot search or browse your profile publicly. They must enter your private 6-digit Doctor Access PIN.
+        </p>
       </div>
 
-      <div className="space-y-4">
-        {rules.length > 0 ? (
-          rules.map(rule => (
-            <div
-              key={rule.id}
-              className="rounded-3xl bg-slate-900/60 border border-slate-800/80 p-6 backdrop-blur-xl flex flex-col md:flex-row md:items-center justify-between gap-6"
+      {/* Private Doctor Access PIN Card */}
+      <div className="rounded-3xl bg-gradient-to-br from-cyan-950/40 via-slate-900/80 to-slate-950 border border-cyan-500/30 p-6 sm:p-8 backdrop-blur-xl shadow-xl space-y-6 relative overflow-hidden">
+        <div className="absolute top-0 right-0 w-80 h-80 bg-cyan-500/5 rounded-full blur-3xl pointer-events-none" />
+
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="space-y-1">
+            <span className="text-[11px] font-mono uppercase tracking-wider text-cyan-400 font-semibold flex items-center gap-1.5">
+              <Key className="w-3.5 h-3.5" /> Private Clinician Access PIN
+            </span>
+            <h3 className="text-lg font-bold text-white">Your Sovereign Patient Access Code</h3>
+            <p className="text-xs text-slate-400 max-w-xl">
+              Provide this code directly to your doctor or hospital clinic. Once entered into their clinical workstation, they will be granted read access to your vitals stream, medical history, and CT/X-Ray scans.
+            </p>
+          </div>
+
+          <div className="flex items-center gap-2 self-start sm:self-auto">
+            <button
+              onClick={handleRegenerateCode}
+              className="px-3 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 text-xs font-semibold transition flex items-center gap-1.5"
+              title="Generate a new PIN and invalidate previous codes"
             >
-              <div className="space-y-1">
-                <div className="flex items-center gap-2">
-                  <ShieldCheck className="w-5 h-5 text-teal-400" />
-                  <h4 className="text-base font-bold text-white">{rule.entityName}</h4>
-                  <span className="text-xs text-teal-400 font-mono">({rule.entityType})</span>
-                </div>
-                <p className="text-xs text-slate-400">
-                  Granted: {rule.grantedDate} • Expiry: {rule.expiry}
-                </p>
+              <RefreshCw className="w-3.5 h-3.5" />
+              <span>Regenerate PIN</span>
+            </button>
+          </div>
+        </div>
 
-                {/* Permission Toggles */}
-                <div className="flex flex-wrap items-center gap-2 pt-3">
-                  {(
-                    [
-                      { key: 'records', label: 'Clinical Records' },
-                      { key: 'vitals', label: 'Vitals Stream' },
-                      { key: 'prescriptions', label: 'Prescriptions' },
-                      { key: 'labs', label: 'Lab Reports' },
-                    ] as const
-                  ).map(perm => (
-                    <button
-                      key={perm.key}
-                      onClick={() => togglePermission(rule.id, perm.key)}
-                      className={cn(
-                        'px-2.5 py-1 rounded-lg text-xs font-semibold transition border flex items-center gap-1.5',
-                        rule.permissions[perm.key]
-                          ? 'bg-teal-500/20 text-teal-300 border-teal-500/40'
-                          : 'bg-slate-950 text-slate-500 border-slate-800 line-through'
-                      )}
-                    >
-                      {rule.permissions[perm.key] ? <Check className="w-3 h-3 text-teal-400" /> : <X className="w-3 h-3" />}
-                      {perm.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div className="flex items-center gap-3">
-                <button
-                  onClick={() => revokeAccess(rule.id, rule.entityName)}
-                  className="px-4 py-2 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/30 text-xs font-semibold transition flex items-center gap-1.5"
-                >
-                  <Trash2 className="w-3.5 h-3.5" /> Revoke Access
-                </button>
-              </div>
+        {/* Big Monospace Display Box */}
+        <div className="p-6 rounded-2xl bg-black/60 border border-cyan-500/40 flex flex-col sm:flex-row items-center justify-between gap-4 shadow-inner">
+          <div className="space-y-1 text-center sm:text-left">
+            <span className="text-[10px] uppercase font-mono tracking-widest text-slate-500">Active Access Code</span>
+            <div className="text-3xl sm:text-4xl font-mono font-black tracking-widest bg-gradient-to-r from-cyan-400 via-teal-300 to-white bg-clip-text text-transparent select-all">
+              {accessPin}
             </div>
-          ))
+          </div>
+
+          <div className="flex items-center gap-3">
+            <button
+              onClick={handleCopyCode}
+              className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-teal-500 to-cyan-500 hover:from-teal-400 hover:to-cyan-400 text-slate-950 font-bold text-xs shadow-lg shadow-cyan-950/50 transition flex items-center gap-2"
+            >
+              {copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+              <span>{copied ? 'Copied to Clipboard' : 'Copy Access Code'}</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Security Disclaimers */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2 text-xs text-slate-400">
+          <div className="p-3 rounded-xl bg-white/[0.02] border border-white/5 flex items-start gap-2.5">
+            <ShieldCheck className="w-4 h-4 text-teal-400 shrink-0 mt-0.5" />
+            <div>
+              <p className="font-semibold text-slate-200">No Public Directory</p>
+              <p className="text-[11px] text-slate-500 mt-0.5">You are invisible to uninvited doctors. No one can search you like Facebook.</p>
+            </div>
+          </div>
+
+          <div className="p-3 rounded-xl bg-white/[0.02] border border-white/5 flex items-start gap-2.5">
+            <Activity className="w-4 h-4 text-cyan-400 shrink-0 mt-0.5" />
+            <div>
+              <p className="font-semibold text-slate-200">Full Record Encryption</p>
+              <p className="text-[11px] text-slate-500 mt-0.5">Vitals, symptoms, and CT/X-Ray scans are secured under end-to-end access tokens.</p>
+            </div>
+          </div>
+
+          <div className="p-3 rounded-xl bg-white/[0.02] border border-white/5 flex items-start gap-2.5">
+            <Trash2 className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+            <div>
+              <p className="font-semibold text-slate-200">Instant Kill Switch</p>
+              <p className="text-[11px] text-slate-500 mt-0.5">Revoking a doctor immediately disconnects their clinical session and closes their view.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Authorized Doctors List */}
+      <div className="space-y-4">
+        <div className="flex items-center justify-between">
+          <h3 className="text-base font-bold text-white flex items-center gap-2">
+            <span>Currently Authorized Clinicians</span>
+            <span className="text-xs font-mono font-normal px-2 py-0.5 rounded-full bg-slate-800 text-slate-400">
+              {authorizedDoctors.length} Active
+            </span>
+          </h3>
+        </div>
+
+        {authorizedDoctors.length > 0 ? (
+          <div className="space-y-3">
+            {authorizedDoctors.map(doc => (
+              <div
+                key={doc.doctorId}
+                className="rounded-2xl bg-slate-900/60 border border-slate-800/80 p-5 backdrop-blur-xl flex flex-col md:flex-row md:items-center justify-between gap-4"
+              >
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <Stethoscope className="w-4 h-4 text-teal-400" />
+                    <h4 className="text-sm font-bold text-white">{doc.doctorName}</h4>
+                    <span className="text-xs text-teal-400 font-medium">({doc.specialization})</span>
+                  </div>
+                  <p className="text-xs text-slate-400">
+                    {doc.hospital} • Authorized: {doc.authorizedAt}
+                  </p>
+
+                  {/* Active Permission Badges */}
+                  <div className="flex flex-wrap items-center gap-2 pt-2">
+                    <span className="px-2 py-0.5 rounded-md text-[10px] font-semibold bg-teal-500/10 text-teal-300 border border-teal-500/20">
+                      ✓ Vitals Stream Active
+                    </span>
+                    <span className="px-2 py-0.5 rounded-md text-[10px] font-semibold bg-cyan-500/10 text-cyan-300 border border-cyan-500/20">
+                      ✓ EMR History Active
+                    </span>
+                    <span className="px-2 py-0.5 rounded-md text-[10px] font-semibold bg-indigo-500/10 text-indigo-300 border border-indigo-500/20">
+                      ✓ Diagnostic Scans Active
+                    </span>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={() => handleRevokeDoctor(doc.doctorId, doc.doctorName)}
+                    className="px-4 py-2 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/30 text-xs font-semibold transition flex items-center gap-1.5 self-start md:self-auto cursor-pointer"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Revoke Access</span>
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
         ) : (
           <div className="p-12 rounded-3xl bg-slate-900/40 border border-slate-800/80 text-center space-y-3">
             <ShieldCheck className="w-10 h-10 text-teal-500 mx-auto" />
-            <h4 className="text-base font-semibold text-white">Full Privacy Maintained</h4>
-            <p className="text-xs text-slate-400 max-w-md mx-auto">
-              No external physicians or healthcare institutions currently have access to your health record.
-              Your data is fully encrypted and accessible exclusively by you until you choose to grant permission.
+            <h4 className="text-base font-semibold text-white">No Clinicians Currently Authorized</h4>
+            <p className="text-xs text-slate-400 max-w-md mx-auto leading-relaxed">
+              Your medical records, vitals, and diagnostic scans are completely private. No doctors or clinics have access. Share your 6-digit access code above when you want a clinician to review your records.
             </p>
           </div>
         )}

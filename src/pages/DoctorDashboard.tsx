@@ -46,11 +46,16 @@ import {
   Info,
   DollarSign,
   Save,
-  ArrowRight
+  ArrowRight,
+  Key,
+  Lock,
+  Unlock
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/lib/supabase';
+import { DiagnosticImagingVault } from '@/components/medical/DiagnosticImagingVault';
+import { unlockPatientWithPin } from '@/lib/accessControl';
 
 // Types
 export interface Patient {
@@ -150,24 +155,38 @@ const INITIAL_APPOINTMENTS: Appointment[] = [];
 const INITIAL_CONSULTATIONS: ConsultationRecord[] = [];
 
 export function DoctorDashboard() {
-  const auth = useAuth?.() || {};
-  const user = auth.user || null;
+  const { user, profile, loading, isDemo, signOut } = useAuth();
 
   // Session guard
   useEffect(() => {
+    if (loading) return;
     const demo = localStorage.getItem('medconnect_demo_user');
-    if (!auth.loading && !user && !auth.profile && !demo) {
+    if (!user && !profile && !demo && !isDemo) {
       window.location.href = '/';
     }
-  }, [user, auth.profile, auth.loading]);
+  }, [user, profile, loading, isDemo]);
 
   // State
   const [activeTab, setActiveTab] = useState<string>('overview');
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [patients, setPatients] = useState<Patient[]>(INITIAL_PATIENTS);
+  const [patients, setPatients] = useState<Patient[]>(() => {
+    try {
+      const docId = user?.id || 'doc-1';
+      const cached = localStorage.getItem(`medconnect_doctor_unlocked_${docId}`);
+      if (cached) return JSON.parse(cached);
+    } catch {
+      // ignore
+    }
+    return INITIAL_PATIENTS;
+  });
   const [appointments, setAppointments] = useState<Appointment[]>(INITIAL_APPOINTMENTS);
   const [consultations, setConsultations] = useState<ConsultationRecord[]>(INITIAL_CONSULTATIONS);
   const [selectedPatientForRecord, setSelectedPatientForRecord] = useState<Patient | null>(null);
+
+  // Unlock PIN Modal State
+  const [isUnlockModalOpen, setIsUnlockModalOpen] = useState(false);
+  const [pinInput, setPinInput] = useState('');
+  const [isUnlocking, setIsUnlocking] = useState(false);
 
   // Toast / notification banner
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -178,17 +197,87 @@ export function DoctorDashboard() {
   };
 
   // Profile data
-  const [doctorProfile, setDoctorProfile] = useState({
-    code: auth.profile?.unique_code || (user?.id ? `DOC-${user.id.replace(/-/g, '').slice(0, 9).toUpperCase()}` : 'DOC-PENDING'),
-    name: auth.profile?.full_name || (user?.user_metadata?.full_name as string) || (user?.email ? 'Dr. ' + user.email.split('@')[0] : 'Dr. Attending'),
+  const [doctorProfile, setDoctorProfile] = useState(() => ({
+    code: profile?.unique_code || (user?.id ? `DOC-${user.id.replace(/-/g, '').slice(0, 9).toUpperCase()}` : 'DOC-PENDING'),
+    name: profile?.full_name || (user?.user_metadata?.full_name as string) || (user?.email ? 'Dr. ' + user.email.split('@')[0] : 'Dr. Attending'),
     title: 'Physician',
-    specialization: ((auth.profile?.metadata as any)?.specialization as string) || 'General Medicine',
-    license: ((auth.profile?.metadata as any)?.council_reg as string) || 'Pending Verification',
-    hospital: ((auth.profile?.metadata as any)?.current_institution as string) || 'MedConnect Healthcare Network',
-    phone: auth.profile?.phone || '',
+    specialization: ((profile?.metadata as any)?.specialization as string) || 'General Medicine',
+    license: ((profile?.metadata as any)?.council_reg as string) || 'Pending Verification',
+    hospital: ((profile?.metadata as any)?.current_institution as string) || 'MedConnect Healthcare Network',
+    phone: profile?.phone || '',
     email: user?.email || '',
     bio: 'Licensed clinician providing telehealth and clinical consultations on MedConnect AI.'
-  });
+  }));
+
+  // Sync profile when loaded
+  useEffect(() => {
+    if (profile) {
+      setDoctorProfile(prev => ({
+        ...prev,
+        code: profile.unique_code || prev.code,
+        name: profile.full_name || prev.name,
+        specialization: ((profile.metadata as any)?.specialization as string) || prev.specialization,
+        license: ((profile.metadata as any)?.council_reg as string) || prev.license,
+        hospital: ((profile.metadata as any)?.current_institution as string) || prev.hospital,
+        phone: profile.phone || prev.phone,
+        email: user?.email || prev.email,
+      }));
+    }
+  }, [profile, user]);
+
+  const handleUnlockWithPin = (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!pinInput.trim()) {
+      showToast('Please enter the patient’s 6-digit Doctor Access PIN.');
+      return;
+    }
+    setIsUnlocking(true);
+    const result = unlockPatientWithPin(pinInput.trim(), {
+      doctorId: user?.id || 'doc-1',
+      doctorName: doctorProfile.name,
+      hospital: doctorProfile.hospital,
+      specialization: doctorProfile.specialization,
+    });
+    setIsUnlocking(false);
+
+    if (result.success && result.patient) {
+      const pat = result.patient;
+      const newPat: Patient = {
+        id: pat.patientId,
+        name: pat.patientName,
+        pid: pat.patientPid,
+        age: Number(pat.age) || 32,
+        gender: (pat.gender as any) || 'Other',
+        bloodGroup: pat.bloodGroup || 'O+',
+        phone: pat.phone || '',
+        email: pat.email || '',
+        allergies: [],
+        chronicConditions: [],
+        vitalsHistory: [],
+        lastVisit: 'Today',
+      };
+
+      setPatients(prev => {
+        const exists = prev.some(p => p.id === newPat.id);
+        const updated = exists ? prev.map(p => p.id === newPat.id ? newPat : p) : [newPat, ...prev];
+        try {
+          const docId = user?.id || 'doc-1';
+          localStorage.setItem(`medconnect_doctor_unlocked_${docId}`, JSON.stringify(updated));
+        } catch {
+          // ignore
+        }
+        return updated;
+      });
+
+      setSelectedPatientForRecord(newPat);
+      setIsUnlockModalOpen(false);
+      setPinInput('');
+      setActiveTab('records');
+      showToast(`Record Unlocked: Access granted for ${pat.patientName}. Vitals & scans now accessible.`);
+    } else {
+      showToast(result.error || 'Invalid PIN. Please ask the patient for an active 6-digit access code.');
+    }
+  };
 
   // Schedule settings
   const [scheduleSettings, setScheduleSettings] = useState({
@@ -471,6 +560,56 @@ export function DoctorDashboard() {
     { id: 'settings', label: 'Settings', icon: Settings }
   ];
 
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-[#070b13] flex flex-col items-center justify-center text-slate-200">
+        <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-teal-500 to-cyan-400 p-0.5 animate-pulse mb-4">
+          <div className="w-full h-full bg-slate-950 rounded-[14px] flex items-center justify-center">
+            <Stethoscope className="w-6 h-6 text-teal-400 animate-spin" />
+          </div>
+        </div>
+        <p className="text-sm font-medium text-slate-400">Loading Doctor Clinical Workspace...</p>
+      </div>
+    );
+  }
+
+  // Cross-role guard
+  if (profile && profile.role !== 'doctor' && !isDemo) {
+    return (
+      <div className="min-h-screen bg-[#070b13] flex flex-col items-center justify-center text-slate-200 px-4">
+        <div className="max-w-md w-full bg-slate-900/80 border border-red-500/30 rounded-3xl p-8 text-center space-y-4 backdrop-blur-xl">
+          <div className="w-16 h-16 rounded-2xl bg-red-500/10 border border-red-500/20 text-red-400 flex items-center justify-center mx-auto">
+            <AlertTriangle className="w-8 h-8" />
+          </div>
+          <h2 className="text-xl font-bold text-white">Role Mismatch</h2>
+          <p className="text-sm text-slate-400">
+            This account is registered as a <span className="text-teal-400 font-semibold uppercase">{profile.role}</span>. The Clinical Doctor Portal is restricted to verified physician accounts only.
+          </p>
+          <div className="pt-2 flex flex-col sm:flex-row gap-3">
+            <button
+              onClick={() => {
+                if (profile.role === 'patient') window.location.href = '/patient';
+                else if (profile.role === 'institution') window.location.href = '/institution';
+              }}
+              className="flex-1 py-2.5 px-4 rounded-xl font-bold text-sm bg-teal-500 text-slate-950 hover:bg-teal-400 transition"
+            >
+              Go to {profile.role === 'patient' ? 'Patient' : 'Institution'} Portal
+            </button>
+            <button
+              onClick={async () => {
+                await signOut();
+                window.location.href = '/';
+              }}
+              className="py-2.5 px-4 rounded-xl font-bold text-sm bg-white/5 text-slate-300 hover:bg-white/10 border border-white/10 transition"
+            >
+              Sign Out
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="flex h-screen w-full bg-[#0a0f1d] text-slate-100 overflow-hidden font-sans">
       {/* Toast Notification */}
@@ -572,7 +711,7 @@ export function DoctorDashboard() {
         <div className="p-3 border-t border-white/10">
           <button
             onClick={async () => {
-              if (auth.signOut) await auth.signOut();
+              await signOut();
               window.location.href = '/';
             }}
             className="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-xs font-medium text-rose-400 hover:bg-rose-500/10 transition cursor-pointer"
@@ -598,7 +737,20 @@ export function DoctorDashboard() {
 
           <div className="flex items-center gap-3">
             <button
+              onClick={() => setIsUnlockModalOpen(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 font-semibold text-xs transition"
+            >
+              <Key className="w-3.5 h-3.5" />
+              <span>Unlock Patient PIN</span>
+            </button>
+
+            <button
               onClick={() => {
+                if (patients.length === 0) {
+                  setIsUnlockModalOpen(true);
+                  showToast('Please unlock a patient first using their 6-digit access PIN.');
+                  return;
+                }
                 setSelectedPatientForConsult(patients[0]);
                 setConsultationStep(1);
                 setActiveTab('consultations');
@@ -611,7 +763,7 @@ export function DoctorDashboard() {
 
             <button
               onClick={async () => {
-                if (auth.signOut) await auth.signOut();
+                await signOut();
                 window.location.href = '/';
               }}
               title="Sign Out"
@@ -706,6 +858,8 @@ export function DoctorDashboard() {
                 consultations={consultations}
                 selectedPatient={selectedPatientForRecord}
                 onSelectPatient={setSelectedPatientForRecord}
+                onOpenUnlockModal={() => setIsUnlockModalOpen(true)}
+                showToast={showToast}
               />
             )}
 
@@ -782,6 +936,86 @@ export function DoctorDashboard() {
             )}
           </AnimatePresence>
         </div>
+
+        {/* ==================================================================== */}
+        {/* UNLOCK PATIENT VIA 6-DIGIT CONSENT PIN MODAL                         */}
+        {/* ==================================================================== */}
+        <AnimatePresence>
+          {isUnlockModalOpen && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md">
+              <motion.div
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.95 }}
+                className="w-full max-w-md bg-[#0d1527] border border-cyan-500/40 rounded-3xl p-6 shadow-2xl space-y-5"
+              >
+                <div className="flex items-center justify-between pb-3 border-b border-white/10">
+                  <div className="flex items-center gap-2.5">
+                    <Key className="w-5 h-5 text-cyan-400" />
+                    <h3 className="text-base font-bold text-white">Unlock Patient Records</h3>
+                  </div>
+                  <button
+                    onClick={() => {
+                      setIsUnlockModalOpen(false);
+                      setPinInput('');
+                    }}
+                    className="p-1 rounded-lg text-slate-400 hover:text-white"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+
+                <div className="space-y-3 text-xs">
+                  <div className="p-3.5 rounded-2xl bg-cyan-500/10 border border-cyan-500/20 text-cyan-300 leading-relaxed">
+                    <p className="font-semibold mb-0.5">Zero-Trust Consent Security</p>
+                    Per clinical confidentiality regulations, patient records cannot be searched publicly. Have the patient open their <strong>Access Control</strong> tab and provide their active 6-digit Doctor Access PIN (e.g. <span className="font-mono font-bold">MED-849201</span>).
+                  </div>
+
+                  <form onSubmit={handleUnlockWithPin} className="space-y-4 pt-2">
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-300 mb-1.5">
+                        Patient Access Code (PIN) *
+                      </label>
+                      <div className="relative">
+                        <input
+                          type="text"
+                          required
+                          autoFocus
+                          placeholder="e.g. MED-849201"
+                          value={pinInput}
+                          onChange={e => setPinInput(e.target.value.toUpperCase())}
+                          className="w-full px-4 py-3 rounded-xl bg-black/60 border border-cyan-500/40 text-white font-mono text-base tracking-wider focus:outline-none focus:border-cyan-400 placeholder:text-slate-600 uppercase"
+                        />
+                        <Key className="w-4 h-4 text-cyan-400 absolute right-3.5 top-3.5 pointer-events-none" />
+                      </div>
+                    </div>
+
+                    <div className="flex items-center justify-end gap-3 pt-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsUnlockModalOpen(false);
+                          setPinInput('');
+                        }}
+                        className="px-4 py-2 rounded-xl text-slate-400 hover:text-white hover:bg-white/5 transition"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="submit"
+                        disabled={isUnlocking || !pinInput.trim()}
+                        className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-teal-500 to-cyan-500 hover:from-teal-400 hover:to-cyan-400 text-slate-950 font-bold transition shadow-lg shadow-teal-500/20 disabled:opacity-50 flex items-center gap-2"
+                      >
+                        <Unlock className="w-4 h-4" />
+                        <span>{isUnlocking ? 'Verifying...' : 'Unlock Patient Records'}</span>
+                      </button>
+                    </div>
+                  </form>
+                </div>
+              </motion.div>
+            </div>
+          )}
+        </AnimatePresence>
       </main>
     </div>
   );
@@ -1794,14 +2028,19 @@ function PatientRecordsSection({
   patients,
   consultations,
   selectedPatient,
-  onSelectPatient
+  onSelectPatient,
+  onOpenUnlockModal,
+  showToast,
 }: {
   patients: Patient[];
   consultations: ConsultationRecord[];
   selectedPatient: Patient | null;
   onSelectPatient: (p: Patient) => void;
+  onOpenUnlockModal: () => void;
+  showToast: (m: string) => void;
 }) {
   const [search, setSearch] = useState('');
+  const [recordTab, setRecordTab] = useState<'timeline' | 'imaging'>('timeline');
   const patient = selectedPatient || patients[0];
 
   const patientConsultations = consultations.filter(c => c.patientId === patient?.id);
@@ -1810,15 +2049,25 @@ function PatientRecordsSection({
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6">
       {/* Patient Selector Bar */}
       <div className="p-4 rounded-2xl bg-white/[0.03] border border-white/10 backdrop-blur-md flex flex-col sm:flex-row items-center justify-between gap-4">
-        <div className="relative w-full sm:w-80">
-          <Search className="w-4 h-4 absolute left-3 top-3 text-slate-400" />
-          <input
-            type="text"
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            placeholder="Search patient record..."
-            className="w-full pl-9 pr-3 py-2 rounded-xl bg-white/5 border border-white/10 text-white placeholder-slate-500 text-xs focus:outline-none focus:border-teal-500"
-          />
+        <div className="flex items-center gap-3 w-full sm:w-auto flex-1">
+          <div className="relative w-full sm:w-80">
+            <Search className="w-4 h-4 absolute left-3 top-3 text-slate-400" />
+            <input
+              type="text"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder="Search unlocked patients..."
+              className="w-full pl-9 pr-3 py-2 rounded-xl bg-white/5 border border-white/10 text-white placeholder-slate-500 text-xs focus:outline-none focus:border-teal-500"
+            />
+          </div>
+
+          <button
+            onClick={onOpenUnlockModal}
+            className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-teal-500 to-cyan-500 text-slate-950 font-bold text-xs flex items-center gap-1.5 shrink-0 hover:brightness-110 transition shadow-sm shadow-teal-500/20"
+          >
+            <Key className="w-3.5 h-3.5" />
+            <span>Unlock Patient via PIN</span>
+          </button>
         </div>
 
         <div className="flex items-center gap-2 overflow-x-auto w-full sm:w-auto">
@@ -1841,7 +2090,26 @@ function PatientRecordsSection({
         </div>
       </div>
 
-      {patient && (
+      {patients.length === 0 ? (
+        <div className="p-12 rounded-3xl bg-white/[0.02] border border-white/10 text-center space-y-4">
+          <div className="w-14 h-14 rounded-2xl bg-teal-500/10 border border-teal-500/20 text-teal-400 flex items-center justify-center mx-auto">
+            <Lock className="w-7 h-7" />
+          </div>
+          <div className="space-y-1">
+            <h3 className="text-lg font-bold text-white">No Patient Records Unlocked</h3>
+            <p className="text-xs text-slate-400 max-w-md mx-auto leading-relaxed">
+              Patients maintain sovereign privacy control over their data. Clinicians cannot search or browse patient profiles publicly. Please request a 6-digit Doctor Access PIN from your patient (e.g. <span className="font-mono text-teal-300">MED-849201</span>) to unlock their medical chart and CT/X-Ray imaging.
+            </p>
+          </div>
+          <button
+            onClick={onOpenUnlockModal}
+            className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-teal-500 to-cyan-500 text-slate-950 font-bold text-xs shadow-md shadow-teal-500/20 transition flex items-center gap-2 mx-auto"
+          >
+            <Key className="w-4 h-4" />
+            <span>Enter Patient Access PIN</span>
+          </button>
+        </div>
+      ) : patient ? (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* Patient Card Left Side */}
           <div className="space-y-6">
@@ -1920,97 +2188,136 @@ function PatientRecordsSection({
               </div>
             </div>
 
-            {/* Vitals History Sparklines */}
+            {/* Vitals History */}
             <div className="p-5 rounded-2xl bg-white/[0.03] border border-white/10 backdrop-blur-md">
               <h4 className="text-xs font-semibold text-white mb-3 flex items-center gap-2">
                 <Activity className="w-4 h-4 text-teal-400" /> Vitals History
               </h4>
               <div className="space-y-3">
-                {patient.vitalsHistory.map((vh, i) => (
-                  <div key={i} className="p-3 rounded-xl bg-white/[0.02] border border-white/5 text-xs">
-                    <div className="flex justify-between text-slate-400 mb-1.5 font-mono text-[11px]">
-                      <span>{vh.date}</span>
-                      <span className="text-teal-300 font-semibold">BP {vh.bp}</span>
-                    </div>
-                    <div className="grid grid-cols-3 gap-2 text-[11px] text-slate-300">
-                      <span>HR: {vh.hr} bpm</span>
-                      <span>Temp: {vh.temp}°C</span>
-                      <span>SpO2: {vh.spo2}%</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-
-          {/* EMR Consultations Timeline Right Side */}
-          <div className="lg:col-span-2 space-y-6">
-            <div className="p-5 rounded-2xl bg-white/[0.03] border border-white/10 backdrop-blur-md">
-              <h3 className="text-base font-bold text-white mb-1">EMR Clinical Timeline</h3>
-              <p className="text-xs text-slate-400 mb-6">Historical record of all consultations, findings, prescriptions, and lab investigations</p>
-
-              <div className="space-y-6 relative before:absolute before:left-3 before:top-2 before:bottom-2 before:w-0.5 before:bg-white/10">
-                {patientConsultations.length > 0 ? (
-                  patientConsultations.map(consult => (
-                    <div key={consult.id} className="relative pl-8">
-                      <div className="absolute left-1.5 top-1.5 w-3.5 h-3.5 rounded-full bg-teal-400 ring-4 ring-[#0a0f1d]" />
-                      <div className="p-5 rounded-2xl bg-white/[0.02] border border-white/10 space-y-4">
-                        <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-white/5">
-                          <div className="flex items-center gap-2">
-                            <span className="text-sm font-bold text-white">{consult.date}</span>
-                            <span className="text-xs font-mono text-cyan-300 px-2 py-0.5 rounded bg-cyan-500/10 border border-cyan-500/20">
-                              {consult.emrCode}
-                            </span>
-                          </div>
-                          <span className="text-xs text-slate-400">{consult.doctorName}</span>
-                        </div>
-
-                        <div>
-                          <span className="text-xs font-semibold text-teal-300">Chief Complaint:</span>
-                          <p className="text-xs text-slate-300 mt-0.5">{consult.chiefComplaint}</p>
-                        </div>
-
-                        <div>
-                          <span className="text-xs font-semibold text-slate-300">Diagnoses:</span>
-                          <div className="flex flex-wrap gap-1.5 mt-1">
-                            {consult.diagnoses.map((d, i) => (
-                              <span key={i} className="text-[11px] px-2 py-0.5 rounded bg-teal-500/10 text-teal-300 border border-teal-500/20">
-                                {d}
-                              </span>
-                            ))}
-                          </div>
-                        </div>
-
-                        <div className="p-3 rounded-xl bg-white/[0.02] border border-white/5 text-xs text-slate-300">
-                          <span className="font-semibold text-slate-200">Treatment Plan:</span> {consult.treatmentPlan}
-                        </div>
-
-                        {consult.prescriptions.length > 0 && (
-                          <div>
-                            <span className="text-xs font-semibold text-slate-300">Prescribed Medications:</span>
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-2">
-                              {consult.prescriptions.map(p => (
-                                <div key={p.id} className="p-2.5 rounded-lg bg-white/5 text-xs text-slate-300 border border-white/5">
-                                  <p className="font-semibold text-teal-300">{p.medication} {p.dosage}</p>
-                                  <p className="text-[11px] text-slate-400">{p.frequency} • {p.duration}</p>
-                                </div>
-                              ))}
-                            </div>
-                          </div>
-                        )}
+                {patient.vitalsHistory.length > 0 ? (
+                  patient.vitalsHistory.map((vh, i) => (
+                    <div key={i} className="p-3 rounded-xl bg-white/[0.02] border border-white/5 text-xs">
+                      <div className="flex justify-between text-slate-400 mb-1.5 font-mono text-[11px]">
+                        <span>{vh.date}</span>
+                        <span className="text-teal-300 font-semibold">BP {vh.bp}</span>
+                      </div>
+                      <div className="grid grid-cols-3 gap-2 text-[11px] text-slate-300">
+                        <span>HR: {vh.hr} bpm</span>
+                        <span>Temp: {vh.temp}°C</span>
+                        <span>SpO2: {vh.spo2}%</span>
                       </div>
                     </div>
                   ))
                 ) : (
-                  <div className="p-8 text-center text-slate-500 text-xs">
-                    No past consultation records on file for this patient.
-                  </div>
+                  <p className="text-xs text-slate-500 italic">No vitals readings logged yet.</p>
                 )}
               </div>
             </div>
           </div>
+
+          {/* EMR Consultations Timeline & Diagnostic Imaging Right Side */}
+          <div className="lg:col-span-2 space-y-6">
+            <div className="p-5 rounded-2xl bg-white/[0.03] border border-white/10 backdrop-blur-md">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6 pb-4 border-b border-white/10">
+                <div>
+                  <h3 className="text-base font-bold text-white mb-0.5">Clinical Chart & Diagnostics</h3>
+                  <p className="text-xs text-slate-400">Consultation history, diagnoses, and diagnostic radiology scans</p>
+                </div>
+
+                <div className="flex items-center gap-2 p-1 rounded-xl bg-white/5 border border-white/10 self-start sm:self-auto">
+                  <button
+                    onClick={() => setRecordTab('timeline')}
+                    className={cn(
+                      'px-3 py-1.5 rounded-lg text-xs font-semibold transition',
+                      recordTab === 'timeline' ? 'bg-teal-500 text-slate-950 shadow' : 'text-slate-400 hover:text-white'
+                    )}
+                  >
+                    EMR Timeline
+                  </button>
+                  <button
+                    onClick={() => setRecordTab('imaging')}
+                    className={cn(
+                      'px-3 py-1.5 rounded-lg text-xs font-semibold transition flex items-center gap-1.5',
+                      recordTab === 'imaging' ? 'bg-teal-500 text-slate-950 shadow' : 'text-slate-400 hover:text-white'
+                    )}
+                  >
+                    <Eye className="w-3.5 h-3.5" />
+                    <span>CT / X-Ray / Scans</span>
+                  </button>
+                </div>
+              </div>
+
+              {recordTab === 'imaging' ? (
+                <DiagnosticImagingVault
+                  patientId={patient.id}
+                  patientName={patient.name}
+                  isDoctorView={true}
+                  onShowToast={(t, d) => showToast(`${t}${d ? ': ' + d : ''}`)}
+                />
+              ) : (
+                <div className="space-y-6 relative before:absolute before:left-3 before:top-2 before:bottom-2 before:w-0.5 before:bg-white/10">
+                  {patientConsultations.length > 0 ? (
+                    patientConsultations.map(consult => (
+                      <div key={consult.id} className="relative pl-8">
+                        <div className="absolute left-1.5 top-1.5 w-3.5 h-3.5 rounded-full bg-teal-400 ring-4 ring-[#0a0f1d]" />
+                        <div className="p-5 rounded-2xl bg-white/[0.02] border border-white/10 space-y-4">
+                          <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-white/5">
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm font-bold text-white">{consult.date}</span>
+                              <span className="text-xs font-mono text-cyan-300 px-2 py-0.5 rounded bg-cyan-500/10 border border-cyan-500/20">
+                                {consult.emrCode}
+                              </span>
+                            </div>
+                            <span className="text-xs text-slate-400">{consult.doctorName}</span>
+                          </div>
+
+                          <div>
+                            <span className="text-xs font-semibold text-teal-300">Chief Complaint:</span>
+                            <p className="text-xs text-slate-300 mt-0.5">{consult.chiefComplaint}</p>
+                          </div>
+
+                          <div>
+                            <span className="text-xs font-semibold text-slate-300">Diagnoses:</span>
+                            <div className="flex flex-wrap gap-1.5 mt-1">
+                              {consult.diagnoses.map((d, i) => (
+                                <span key={i} className="text-[11px] px-2 py-0.5 rounded bg-teal-500/10 text-teal-300 border border-teal-500/20">
+                                  {d}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+
+                          <div className="p-3 rounded-xl bg-white/[0.02] border border-white/5 text-xs text-slate-300">
+                            <span className="font-semibold text-slate-200">Treatment Plan:</span> {consult.treatmentPlan}
+                          </div>
+
+                          {consult.prescriptions.length > 0 && (
+                            <div>
+                              <span className="text-xs font-semibold text-slate-300">Prescribed Medications:</span>
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-2">
+                                {consult.prescriptions.map(p => (
+                                  <div key={p.id} className="p-2.5 rounded-lg bg-white/5 text-xs text-slate-300 border border-white/5">
+                                    <p className="font-semibold text-teal-300">{p.medication} {p.dosage}</p>
+                                    <p className="text-[11px] text-slate-400">{p.frequency} • {p.duration}</p>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="p-8 text-center text-slate-500 text-xs">
+                      No past consultation records on file for this patient.
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
         </div>
-      )}
+      ) : null}
     </motion.div>
   );
 }

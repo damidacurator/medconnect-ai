@@ -377,17 +377,27 @@ export const Landing: React.FC = () => {
                   </div>
 
                   {/* Role CTA */}
-                  <button
-                    type="button"
-                    onClick={() => handleOpenAuth('signup', card.role)}
-                    className={cn(
-                      'w-full py-3.5 px-4 rounded-xl font-bold text-sm transition-all duration-200 flex items-center justify-center space-x-2 shadow-lg',
-                      card.buttonBg
-                    )}
-                  >
-                    <span>Get Started as {card.title.replace('For ', '')}</span>
-                    <ArrowRight className="w-4 h-4" />
-                  </button>
+                  <div className="space-y-2.5">
+                    <button
+                      type="button"
+                      onClick={() => handleOpenAuth('signup', card.role)}
+                      className={cn(
+                        'w-full py-3.5 px-4 rounded-xl font-bold text-sm transition-all duration-200 flex items-center justify-center space-x-2 shadow-lg',
+                        card.buttonBg
+                      )}
+                    >
+                      <span>Get Started as {card.title.replace('For ', '')}</span>
+                      <ArrowRight className="w-4 h-4" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleOpenAuth('signin', card.role)}
+                      className="w-full py-2.5 px-3 rounded-xl text-xs font-semibold text-slate-300 hover:text-white bg-white/5 hover:bg-white/10 border border-white/10 transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
+                    >
+                      <span>Sign In as {card.title.replace('For ', '')}</span>
+                      <ArrowRight className="w-3.5 h-3.5 opacity-60" />
+                    </button>
+                  </div>
                 </motion.div>
               );
             })}
