@@ -273,10 +273,19 @@ export async function saveVitals(vitalsData: VitalsData, userId: string) {
   }
   if (!userId) throw new Error('No user ID provided');
 
+  const recordedAt = vitalsData.recorded_at || new Date().toISOString();
   const payload: Record<string, unknown> = {
     patient_id: userId,
-    recorded_at: new Date().toISOString(),
-    ...vitalsData,
+    recorded_at: recordedAt,
+    heart_rate: vitalsData.heart_rate,
+    systolic_bp: vitalsData.systolic_bp,
+    diastolic_bp: vitalsData.diastolic_bp,
+    oxygen_saturation: vitalsData.oxygen_saturation,
+    temperature: vitalsData.temperature,
+    weight_kg: vitalsData.weight_kg,
+    height_cm: vitalsData.height_cm,
+    blood_glucose: vitalsData.blood_glucose,
+    notes: vitalsData.notes || null,
   };
 
   // 1. Always update local cache so current browser immediately has the new entry
@@ -301,6 +310,36 @@ export async function saveVitals(vitalsData: VitalsData, userId: string) {
   } catch (cloudErr) {
     console.warn('Supabase health_vitals insert exception:', cloudErr);
   }
+
+  // 3. Sync to profiles.metadata.vitals_history & latest_vitals
+  // Since all authenticated physicians can query public.profiles via RLS,
+  // this guarantees simultaneous real-time availability on the doctor workstation
+  try {
+    const { data: prof } = await supabase.from('profiles').select('metadata').eq('id', userId).maybeSingle();
+    const existingMeta = (prof?.metadata as Record<string, any>) || {};
+    const existingHistory = Array.isArray(existingMeta.vitals_history) ? existingMeta.vitals_history : [];
+    const formattedEntry = {
+      id: crypto.randomUUID(),
+      date: new Date(recordedAt).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' }) + ' ' + new Date(recordedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      bp: `${vitalsData.systolic_bp || 120}/${vitalsData.diastolic_bp || 80}`,
+      hr: vitalsData.heart_rate || 72,
+      temp: Number(vitalsData.temperature) || 36.6,
+      spo2: Number(vitalsData.oxygen_saturation) || 98,
+      glucose: vitalsData.blood_glucose ? Number(vitalsData.blood_glucose) : undefined,
+      weight: vitalsData.weight_kg ? Number(vitalsData.weight_kg) : undefined,
+      recorded_at: recordedAt,
+    };
+    const updatedHistory = [formattedEntry, ...existingHistory.filter((e: any) => e.recorded_at !== recordedAt)].slice(0, 30);
+    await supabase.from('profiles').update({
+      metadata: {
+        ...existingMeta,
+        latest_vitals: formattedEntry,
+        vitals_history: updatedHistory,
+      },
+    }).eq('id', userId);
+  } catch (profErr) {
+    console.warn('Profile vitals metadata sync error:', profErr);
+  }
 }
 
 export async function getVitalsHistory(limit = 20, userId = '') {
@@ -321,6 +360,17 @@ export async function getVitalsHistory(limit = 20, userId = '') {
     if (!error && data && data.length > 0) return data;
   } catch {
     // fallback
+  }
+
+  // Fallback: check profile metadata vitals_history
+  try {
+    const { data: prof } = await supabase.from('profiles').select('metadata').eq('id', userId).maybeSingle();
+    const metaList = (prof?.metadata as any)?.vitals_history;
+    if (Array.isArray(metaList) && metaList.length > 0) {
+      return metaList.slice(0, limit);
+    }
+  } catch {
+    // ignore
   }
 
   const KEY = 'medconnect_health_vitals';

@@ -795,6 +795,10 @@ export function DoctorDashboard() {
             <span className="hidden sm:inline-block px-2.5 py-0.5 text-xs font-mono rounded-md bg-teal-500/10 text-teal-300 border border-teal-500/20">
               License Verified
             </span>
+            <span className="px-2.5 py-0.5 text-[10px] font-mono rounded-full bg-teal-500/10 text-teal-300 border border-teal-500/30 flex items-center gap-1.5">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+              v1.2.0 • Live Sync
+            </span>
           </div>
 
           <div className="flex items-center gap-3">
@@ -838,7 +842,14 @@ export function DoctorDashboard() {
         </header>
 
         {/* Content Container */}
-        <div className="flex-1 overflow-y-auto p-6">
+        <div
+          className={cn(
+            'flex-1 min-w-0',
+            activeTab === 'messages'
+              ? 'h-[calc(100dvh-4rem)] overflow-hidden p-0 sm:p-6 flex flex-col'
+              : 'overflow-y-auto p-6'
+          )}
+        >
           <AnimatePresence mode="wait">
             {activeTab === 'overview' && (
               <OverviewSection
@@ -2144,6 +2155,7 @@ function PatientRecordsSection({
 
     async function loadPatientVitals() {
       try {
+        // 1. Check health_vitals table
         const { data: vRows } = await supabase
           .from('health_vitals')
           .select('*')
@@ -2162,6 +2174,25 @@ function PatientRecordsSection({
             weight: r.weight_kg ? Number(r.weight_kg) : undefined,
           }));
           setLiveVitals(formatted);
+          return;
+        }
+
+        // 2. Check profiles.metadata.vitals_history (guaranteed accessible across all authenticated roles)
+        const { data: pProfile } = await supabase
+          .from('profiles')
+          .select('metadata')
+          .eq('id', patient.id)
+          .maybeSingle();
+
+        const metaHistory = (pProfile?.metadata as any)?.vitals_history;
+        if (isMounted && Array.isArray(metaHistory) && metaHistory.length > 0) {
+          setLiveVitals(metaHistory);
+          return;
+        }
+
+        // 3. Fallback to patient's cached vitalsHistory from unlock PIN
+        if (isMounted && patient?.vitalsHistory && patient.vitalsHistory.length > 0) {
+          setLiveVitals(patient.vitalsHistory);
           return;
         }
 
@@ -2184,20 +2215,30 @@ function PatientRecordsSection({
             return;
           }
         }
-
-        if (isMounted && patient?.vitalsHistory) {
-          setLiveVitals(patient.vitalsHistory);
-        }
       } catch (err) {
         console.warn('Error loading patient vitals in doctor EMR:', err);
       }
     }
 
     loadPatientVitals();
-    const interval = setInterval(loadPatientVitals, 3000);
+    const interval = setInterval(loadPatientVitals, 2000);
+
+    // Supabase realtime channel for instant event push
+    const channel = supabase
+      .channel(`patient_vitals_live_${patient.id}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'health_vitals', filter: `patient_id=eq.${patient.id}` },
+        () => {
+          if (isMounted) loadPatientVitals();
+        }
+      )
+      .subscribe();
+
     return () => {
       isMounted = false;
       clearInterval(interval);
+      supabase.removeChannel(channel);
     };
   }, [patient?.id]);
 
@@ -2624,7 +2665,7 @@ function MessagesSection({
   }, [patientMessages]);
 
   return (
-    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="h-[calc(100dvh-7.5rem)] sm:h-[calc(100vh-140px)] min-h-[420px] flex rounded-2xl bg-white/[0.03] border border-white/10 backdrop-blur-md overflow-hidden relative">
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="h-full flex-1 flex rounded-none sm:rounded-2xl bg-white/[0.03] border-0 sm:border border-white/10 backdrop-blur-md overflow-hidden relative">
       {/* Patient Conversations List - Collapsible on Mobile */}
       <div
         className={cn(
@@ -2722,7 +2763,7 @@ function MessagesSection({
         </div>
 
         {/* Message Bubble List */}
-        <div className="flex-1 min-h-0 overflow-y-auto p-3 sm:p-4 space-y-3">
+        <div className="flex-1 min-h-0 overflow-y-auto p-3 sm:p-4 space-y-3 overscroll-contain">
           {patientMessages.length === 0 ? (
             <div className="h-full flex flex-col items-center justify-center text-center p-6 space-y-2 text-slate-500">
               <MessageSquare className="w-8 h-8 opacity-40" />
@@ -2754,23 +2795,35 @@ function MessagesSection({
           <div ref={messagesEndRef} />
         </div>
 
-        {/* Input Bar (Sticky, Never Cut Off on Mobile) */}
-        <div className="p-2.5 sm:p-3 border-t border-white/10 bg-slate-950/95 backdrop-blur flex items-center gap-2 flex-shrink-0 sticky bottom-0 z-20">
-          <input
-            type="text"
+        {/* Input Bar (Guaranteed Visible on Mobile, Never Cut Off) */}
+        <form
+          onSubmit={e => {
+            e.preventDefault();
+            if (input.trim()) onSendMessage();
+          }}
+          className="p-2 sm:p-3 border-t border-white/10 bg-slate-950/95 backdrop-blur flex items-end gap-2 shrink-0 z-30"
+        >
+          <textarea
+            rows={1}
             value={input}
             onChange={e => setInput(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && onSendMessage()}
-            placeholder="Type a clinical reply..."
-            className="flex-1 px-3.5 py-2.5 rounded-xl bg-white/5 border border-white/10 text-white text-xs placeholder-slate-500 focus:outline-none focus:border-teal-500"
+            onKeyDown={e => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                if (input.trim()) onSendMessage();
+              }
+            }}
+            placeholder={`Type a clinical reply to ${activePatient?.name}...`}
+            className="flex-1 min-w-0 px-3.5 py-2.5 rounded-xl bg-white/5 border border-white/10 text-white text-xs sm:text-sm placeholder-slate-500 focus:outline-none focus:border-teal-500 resize-none max-h-24 scrollbar-thin"
           />
           <button
-            onClick={onSendMessage}
-            className="p-2.5 rounded-xl bg-teal-500 text-slate-950 hover:brightness-110 transition font-bold shrink-0 cursor-pointer"
+            type="submit"
+            disabled={!input.trim()}
+            className="h-10 w-10 rounded-xl bg-gradient-to-r from-teal-500 to-cyan-500 text-slate-950 font-bold hover:brightness-110 transition shadow disabled:opacity-40 flex items-center justify-center shrink-0 cursor-pointer"
           >
             <Send className="w-4 h-4" />
           </button>
-        </div>
+        </form>
       </div>
     </motion.div>
   );

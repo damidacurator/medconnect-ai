@@ -711,12 +711,16 @@ export function PatientDashboard() {
             >
               <Menu className="w-5 h-5" />
             </button>
-            <div className="hidden sm:block">
+            <div className="hidden sm:flex items-center gap-2">
               <h1 className="text-base font-semibold text-slate-100 flex items-center gap-2">
                 <span>{SIDEBAR_ITEMS.find(s => s.id === activeSection)?.label}</span>
                 <span className="text-slate-500 text-xs font-normal">/</span>
                 <span className="text-xs text-teal-400 font-mono">{patientIdCode}</span>
               </h1>
+              <span className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-mono bg-teal-500/10 text-teal-300 border border-teal-500/30">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                v1.2.0 • Live Sync
+              </span>
             </div>
           </div>
 
@@ -795,15 +799,27 @@ export function PatientDashboard() {
         </header>
 
         {/* Dynamic Section Scrollable Container */}
-        <main className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8 scrollbar-thin scrollbar-thumb-slate-800">
+        <main
+          className={cn(
+            'flex-1 flex flex-col min-w-0',
+            activeSection === 'messages'
+              ? 'h-[calc(100dvh-4rem)] overflow-hidden p-0 sm:p-4'
+              : 'overflow-y-auto p-4 sm:p-6 lg:p-8 scrollbar-thin scrollbar-thumb-slate-800'
+          )}
+        >
           <AnimatePresence mode="wait">
             <motion.div
               key={activeSection}
-              initial={{ opacity: 0, y: 12 }}
+              initial={{ opacity: 0, y: 8 }}
               animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -12 }}
-              transition={{ duration: 0.2 }}
-              className="max-w-7xl mx-auto space-y-6"
+              exit={{ opacity: 0, y: -8 }}
+              transition={{ duration: 0.15 }}
+              className={cn(
+                'w-full mx-auto',
+                activeSection === 'messages'
+                  ? 'h-full flex-1 flex flex-col max-w-full overflow-hidden'
+                  : 'max-w-7xl space-y-6'
+              )}
             >
               {activeSection === 'overview' && (
                 <OverviewSection
@@ -2687,7 +2703,7 @@ function MessagesSection({ userId, patientPid, patientName, onShowToast, onNavig
   }
 
   return (
-    <div className="h-[calc(100dvh-7.5rem)] sm:h-[calc(100vh-11rem)] min-h-[420px] rounded-2xl md:rounded-3xl bg-slate-900/60 border border-slate-800/80 backdrop-blur-xl flex flex-col md:flex-row overflow-hidden relative">
+    <div className="h-full flex-1 flex flex-col md:flex-row rounded-none sm:rounded-2xl md:rounded-3xl bg-slate-900/60 border-0 sm:border border-slate-800/80 backdrop-blur-xl overflow-hidden relative">
       {/* Doctor Conversations List - Collapsible on mobile when chatting */}
       <div
         className={cn(
@@ -2786,7 +2802,7 @@ function MessagesSection({ userId, patientPid, patientName, onShowToast, onNavig
             </div>
 
             {/* Messages Body */}
-            <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden p-3 sm:p-4 space-y-3">
+            <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden p-3 sm:p-4 space-y-3 overscroll-contain">
               {messages.length === 0 ? (
                 <div className="py-12 text-center space-y-2">
                   <MessageSquare className="w-8 h-8 text-slate-600 mx-auto" />
@@ -2823,20 +2839,29 @@ function MessagesSection({ userId, patientPid, patientName, onShowToast, onNavig
               <div ref={messagesEndRef} />
             </div>
 
-            {/* Input Bar (Sticky, Guaranteed Visible on Mobile) */}
-            <form onSubmit={handleSendMessage} className="p-2.5 sm:p-3 border-t border-slate-800 bg-slate-950/95 backdrop-blur flex items-center gap-2 flex-shrink-0 sticky bottom-0 z-20">
-              <input
-                type="text"
+            {/* Input Bar (Guaranteed Visible on Mobile, Never Cut Off) */}
+            <form
+              onSubmit={handleSendMessage}
+              className="p-2 sm:p-3 border-t border-slate-800 bg-slate-950/95 backdrop-blur flex items-end gap-2 shrink-0 z-30"
+            >
+              <textarea
+                rows={1}
                 placeholder={`Message ${activeDoc.doctorName}...`}
                 value={inputText}
                 onChange={e => setInputText(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    handleSendMessage(e);
+                  }
+                }}
                 disabled={isSending}
-                className="flex-1 px-3.5 py-2.5 rounded-xl bg-slate-900 border border-slate-700 text-xs sm:text-sm text-slate-100 focus:border-teal-400 outline-none"
+                className="flex-1 min-w-0 px-3.5 py-2.5 rounded-xl bg-slate-900 border border-slate-700 text-xs sm:text-sm text-slate-100 placeholder-slate-500 focus:border-teal-400 outline-none resize-none max-h-24 scrollbar-thin"
               />
               <button
                 type="submit"
                 disabled={isSending || !inputText.trim()}
-                className="p-2.5 rounded-xl bg-teal-500 hover:bg-teal-400 text-slate-950 font-bold transition shadow disabled:opacity-50 cursor-pointer shrink-0"
+                className="h-10 w-10 rounded-xl bg-gradient-to-r from-teal-500 to-cyan-500 hover:brightness-110 text-slate-950 font-bold transition shadow disabled:opacity-40 cursor-pointer shrink-0 flex items-center justify-center"
               >
                 <Send className="w-4 h-4" />
               </button>

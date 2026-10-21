@@ -551,9 +551,47 @@ export async function unlockPatientWithPin(
   registry[record.accessCode] = record;
   saveRegistry(registry);
 
-  // Sync to Supabase access_grants and patient_access_codes
+  // Sync to Supabase access_grants, consultations, appointments, and patient_access_codes
   try {
-    // 1. Check if an active grant already exists for this doctor
+    // 1. Establish clinical encounter link in consultations & appointments
+    // This satisfies PostgreSQL RLS public.has_patient_access(patient_id) which checks:
+    // (SELECT 1 FROM consultations WHERE patient_id = ... AND doctor_id = ...)
+    // (SELECT 1 FROM appointments WHERE patient_id = ... AND doctor_id = ...)
+    const { data: existingConsult } = await supabase
+      .from('consultations')
+      .select('id')
+      .eq('patient_id', record.patientId)
+      .eq('doctor_id', doctorInfo.doctorId)
+      .maybeSingle();
+
+    if (!existingConsult) {
+      await supabase.from('consultations').insert({
+        patient_id: record.patientId,
+        doctor_id: doctorInfo.doctorId,
+        chief_complaint: 'Unlocked via Patient ID sovereign consent',
+        status: 'in_progress',
+      });
+    }
+
+    const { data: existingAppt } = await supabase
+      .from('appointments')
+      .select('id')
+      .eq('patient_id', record.patientId)
+      .eq('doctor_id', doctorInfo.doctorId)
+      .maybeSingle();
+
+    if (!existingAppt) {
+      await supabase.from('appointments').insert({
+        patient_id: record.patientId,
+        doctor_id: doctorInfo.doctorId,
+        appointment_type: 'virtual',
+        status: 'confirmed',
+        scheduled_at: new Date().toISOString(),
+        reason: 'Sovereign Patient ID Direct Clinical Link',
+      });
+    }
+
+    // 2. Also record in access_grants if permitted
     const { data: existingGrant } = await supabase
       .from('access_grants')
       .select('id')
@@ -572,7 +610,7 @@ export async function unlockPatientWithPin(
       });
     }
 
-    // 2. Also keep patient_access_codes synced
+    // 3. Keep patient_access_codes synced
     await supabase.from('patient_access_codes').upsert({
       patient_id: record.patientId,
       access_code: record.patientPid,
@@ -580,10 +618,10 @@ export async function unlockPatientWithPin(
       updated_at: new Date().toISOString(),
     });
   } catch (syncErr) {
-    console.warn('Supabase access grant sync note:', syncErr);
+    console.warn('Supabase access grant / consultation sync note:', syncErr);
   }
 
-  // 3. Fetch live vitals for this unlocked patient from Supabase & local cache
+  // 4. Fetch live vitals for this unlocked patient from Supabase table & profile metadata
   let vitalsHistory: any[] = [];
   try {
     const { data: vRows } = await supabase
@@ -603,27 +641,48 @@ export async function unlockPatientWithPin(
         glucose: r.blood_glucose ? Number(r.blood_glucose) : undefined,
         weight: r.weight_kg ? Number(r.weight_kg) : undefined,
       }));
-    } else {
-      const localKey = 'medconnect_health_vitals';
-      const raw = localStorage.getItem(localKey);
-      if (raw) {
-        const list = JSON.parse(raw);
-        const userRows = list.filter((r: any) => r.patient_id === record!.patientId);
-        if (userRows.length > 0) {
-          vitalsHistory = userRows.map((r: any) => ({
-            date: new Date(r.recorded_at).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' }) + ' ' + new Date(r.recorded_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-            bp: `${r.systolic_bp || 120}/${r.diastolic_bp || 80}`,
-            hr: r.heart_rate || 72,
-            temp: Number(r.temperature) || 36.6,
-            spo2: Number(r.oxygen_saturation) || 98,
-            glucose: r.blood_glucose ? Number(r.blood_glucose) : undefined,
-            weight: r.weight_kg ? Number(r.weight_kg) : undefined,
-          }));
-        }
-      }
     }
   } catch (vErr) {
-    console.warn('Error fetching vitals for unlocked patient:', vErr);
+    console.warn('Error querying health_vitals for unlocked patient:', vErr);
+  }
+
+  // If health_vitals was empty, check profiles.metadata.vitals_history
+  if (vitalsHistory.length === 0) {
+    try {
+      const { data: prof } = await supabase
+        .from('profiles')
+        .select('metadata')
+        .eq('id', record.patientId)
+        .maybeSingle();
+
+      const metaVitals = (prof?.metadata as any)?.vitals_history;
+      if (Array.isArray(metaVitals) && metaVitals.length > 0) {
+        vitalsHistory = metaVitals;
+      }
+    } catch (profErr) {
+      console.warn('Profile vitals metadata fetch note:', profErr);
+    }
+  }
+
+  // Local storage fallback
+  if (vitalsHistory.length === 0) {
+    const localKey = 'medconnect_health_vitals';
+    const raw = localStorage.getItem(localKey);
+    if (raw) {
+      const list = JSON.parse(raw);
+      const userRows = list.filter((r: any) => r.patient_id === record!.patientId);
+      if (userRows.length > 0) {
+        vitalsHistory = userRows.map((r: any) => ({
+          date: new Date(r.recorded_at).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' }) + ' ' + new Date(r.recorded_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          bp: `${r.systolic_bp || 120}/${r.diastolic_bp || 80}`,
+          hr: r.heart_rate || 72,
+          temp: Number(r.temperature) || 36.6,
+          spo2: Number(r.oxygen_saturation) || 98,
+          glucose: r.blood_glucose ? Number(r.blood_glucose) : undefined,
+          weight: r.weight_kg ? Number(r.weight_kg) : undefined,
+        }));
+      }
+    }
   }
 
   record.vitalsHistory = vitalsHistory;
@@ -685,17 +744,40 @@ export async function fetchDoctorUnlockedPatients(doctorId: string): Promise<any
     patientMap.set(p.id, p);
   }
 
-  // Fetch from Supabase access_grants
+  // Fetch from Supabase access_grants, consultations, appointments, and patient_access_codes
   try {
+    const grantIds: string[] = [];
+
+    // 1. Fetch from consultations
+    const { data: consults } = await supabase
+      .from('consultations')
+      .select('patient_id')
+      .eq('doctor_id', doctorId);
+    if (Array.isArray(consults)) {
+      consults.forEach(c => grantIds.push(c.patient_id));
+    }
+
+    // 2. Fetch from appointments
+    const { data: appts } = await supabase
+      .from('appointments')
+      .select('patient_id')
+      .eq('doctor_id', doctorId);
+    if (Array.isArray(appts)) {
+      appts.forEach(a => grantIds.push(a.patient_id));
+    }
+
+    // 3. Fetch from access_grants
     const { data: grants } = await supabase
       .from('access_grants')
       .select('patient_id')
       .eq('granted_to_id', doctorId)
       .is('revoked_at', null);
 
-    const grantIds = grants?.map(g => g.patient_id) || [];
+    if (Array.isArray(grants)) {
+      grants.forEach(g => grantIds.push(g.patient_id));
+    }
 
-    // Also fetch from patient_access_codes
+    // 4. Also fetch from patient_access_codes
     const { data: pacs } = await supabase
       .from('patient_access_codes')
       .select('patient_id, access_code, authorized_doctors');
@@ -733,14 +815,14 @@ export async function fetchDoctorUnlockedPatients(doctorId: string): Promise<any
             email: profile.email || '',
             allergies: [],
             chronicConditions: [],
-            vitalsHistory: [],
+            vitalsHistory: (profile.metadata as any)?.vitals_history || [],
             lastVisit: 'Connected',
           });
         }
       }
     }
 
-    // Now populate live vitals from health_vitals for every patient
+    // Now populate live vitals from health_vitals & profiles.metadata for every patient
     for (const p of patientMap.values()) {
       try {
         const { data: vRows } = await supabase
@@ -761,22 +843,33 @@ export async function fetchDoctorUnlockedPatients(doctorId: string): Promise<any
             weight: r.weight_kg ? Number(r.weight_kg) : undefined,
           }));
         } else {
-          // Check local cache
-          const localKey = 'medconnect_health_vitals';
-          const raw = localStorage.getItem(localKey);
-          if (raw) {
-            const list = JSON.parse(raw);
-            const userRows = list.filter((r: any) => r.patient_id === p.id);
-            if (userRows.length > 0) {
-              p.vitalsHistory = userRows.map((r: any) => ({
-                date: new Date(r.recorded_at).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' }) + ' ' + new Date(r.recorded_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-                bp: `${r.systolic_bp || 120}/${r.diastolic_bp || 80}`,
-                hr: r.heart_rate || 72,
-                temp: Number(r.temperature) || 36.6,
-                spo2: Number(r.oxygen_saturation) || 98,
-                glucose: r.blood_glucose ? Number(r.blood_glucose) : undefined,
-                weight: r.weight_kg ? Number(r.weight_kg) : undefined,
-              }));
+          // Check profile metadata vitals_history
+          const { data: prof } = await supabase
+            .from('profiles')
+            .select('metadata')
+            .eq('id', p.id)
+            .maybeSingle();
+          const metaVitals = (prof?.metadata as any)?.vitals_history;
+          if (Array.isArray(metaVitals) && metaVitals.length > 0) {
+            p.vitalsHistory = metaVitals;
+          } else {
+            // Check local cache
+            const localKey = 'medconnect_health_vitals';
+            const raw = localStorage.getItem(localKey);
+            if (raw) {
+              const list = JSON.parse(raw);
+              const userRows = list.filter((r: any) => r.patient_id === p.id);
+              if (userRows.length > 0) {
+                p.vitalsHistory = userRows.map((r: any) => ({
+                  date: new Date(r.recorded_at).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' }) + ' ' + new Date(r.recorded_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+                  bp: `${r.systolic_bp || 120}/${r.diastolic_bp || 80}`,
+                  hr: r.heart_rate || 72,
+                  temp: Number(r.temperature) || 36.6,
+                  spo2: Number(r.oxygen_saturation) || 98,
+                  glucose: r.blood_glucose ? Number(r.blood_glucose) : undefined,
+                  weight: r.weight_kg ? Number(r.weight_kg) : undefined,
+                }));
+              }
             }
           }
         }
