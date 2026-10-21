@@ -279,13 +279,7 @@ export async function saveVitals(vitalsData: VitalsData, userId: string) {
     ...vitalsData,
   };
 
-  try {
-    const { error } = await supabase.from('health_vitals').insert(payload as any);
-    if (!error) return;
-  } catch {
-    // fallback
-  }
-
+  // 1. Always update local cache so current browser immediately has the new entry
   const KEY = 'medconnect_health_vitals';
   try {
     const all = JSON.parse(localStorage.getItem(KEY) || '[]');
@@ -296,6 +290,16 @@ export async function saveVitals(vitalsData: VitalsData, userId: string) {
     localStorage.setItem(KEY, JSON.stringify(all));
   } catch (err) {
     console.error('Failed to save vitals to localStorage', err);
+  }
+
+  // 2. Sync to Supabase cloud health_vitals table for attending doctors
+  try {
+    const { error } = await supabase.from('health_vitals').insert(payload as any);
+    if (error) {
+      console.warn('Supabase health_vitals insert note:', error);
+    }
+  } catch (cloudErr) {
+    console.warn('Supabase health_vitals insert exception:', cloudErr);
   }
 }
 

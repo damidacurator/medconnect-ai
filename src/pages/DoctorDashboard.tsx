@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   LayoutDashboard,
@@ -272,7 +272,7 @@ export function DoctorDashboard() {
         email: pat.email || '',
         allergies: [],
         chronicConditions: [],
-        vitalsHistory: [],
+        vitalsHistory: pat.vitalsHistory || [],
         lastVisit: 'Today',
       };
 
@@ -2136,6 +2136,70 @@ function PatientRecordsSection({
   const [search, setSearch] = useState('');
   const [recordTab, setRecordTab] = useState<'timeline' | 'imaging'>('timeline');
   const patient = selectedPatient || patients[0];
+  const [liveVitals, setLiveVitals] = useState<any[]>(patient?.vitalsHistory || []);
+
+  useEffect(() => {
+    if (!patient?.id) return;
+    let isMounted = true;
+
+    async function loadPatientVitals() {
+      try {
+        const { data: vRows } = await supabase
+          .from('health_vitals')
+          .select('*')
+          .eq('patient_id', patient.id)
+          .order('recorded_at', { ascending: false })
+          .limit(30);
+
+        if (isMounted && Array.isArray(vRows) && vRows.length > 0) {
+          const formatted = vRows.map((r: any) => ({
+            date: new Date(r.recorded_at).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' }) + ' ' + new Date(r.recorded_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+            bp: `${r.systolic_bp || 120}/${r.diastolic_bp || 80}`,
+            hr: r.heart_rate || 72,
+            temp: Number(r.temperature) || 36.6,
+            spo2: Number(r.oxygen_saturation) || 98,
+            glucose: r.blood_glucose ? Number(r.blood_glucose) : undefined,
+            weight: r.weight_kg ? Number(r.weight_kg) : undefined,
+          }));
+          setLiveVitals(formatted);
+          return;
+        }
+
+        const localKey = 'medconnect_health_vitals';
+        const raw = localStorage.getItem(localKey);
+        if (raw && isMounted) {
+          const list = JSON.parse(raw);
+          const userRows = list.filter((r: any) => r.patient_id === patient.id);
+          if (userRows.length > 0) {
+            const formatted = userRows.map((r: any) => ({
+              date: new Date(r.recorded_at).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' }) + ' ' + new Date(r.recorded_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+              bp: `${r.systolic_bp || 120}/${r.diastolic_bp || 80}`,
+              hr: r.heart_rate || 72,
+              temp: Number(r.temperature) || 36.6,
+              spo2: Number(r.oxygen_saturation) || 98,
+              glucose: r.blood_glucose ? Number(r.blood_glucose) : undefined,
+              weight: r.weight_kg ? Number(r.weight_kg) : undefined,
+            }));
+            setLiveVitals(formatted);
+            return;
+          }
+        }
+
+        if (isMounted && patient?.vitalsHistory) {
+          setLiveVitals(patient.vitalsHistory);
+        }
+      } catch (err) {
+        console.warn('Error loading patient vitals in doctor EMR:', err);
+      }
+    }
+
+    loadPatientVitals();
+    const interval = setInterval(loadPatientVitals, 3000);
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
+  }, [patient?.id]);
 
   const patientConsultations = consultations.filter(c => c.patientId === patient?.id);
 
@@ -2284,12 +2348,18 @@ function PatientRecordsSection({
 
             {/* Vitals History */}
             <div className="p-5 rounded-2xl bg-white/[0.03] border border-white/10 backdrop-blur-md">
-              <h4 className="text-xs font-semibold text-white mb-3 flex items-center gap-2">
-                <Activity className="w-4 h-4 text-teal-400" /> Vitals History
-              </h4>
+              <div className="flex items-center justify-between mb-3">
+                <h4 className="text-xs font-semibold text-white flex items-center gap-2">
+                  <Activity className="w-4 h-4 text-teal-400" /> Vitals History
+                </h4>
+                <span className="text-[10px] font-mono text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-full flex items-center gap-1.5">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                  Live Sync
+                </span>
+              </div>
               <div className="space-y-3">
-                {patient.vitalsHistory.length > 0 ? (
-                  patient.vitalsHistory.map((vh, i) => (
+                {liveVitals.length > 0 ? (
+                  liveVitals.map((vh, i) => (
                     <div key={i} className="p-3 rounded-xl bg-white/[0.02] border border-white/5 text-xs">
                       <div className="flex justify-between text-slate-400 mb-1.5 font-mono text-[11px]">
                         <span>{vh.date}</span>
@@ -2300,10 +2370,21 @@ function PatientRecordsSection({
                         <span>Temp: {vh.temp}°C</span>
                         <span>SpO2: {vh.spo2}%</span>
                       </div>
+                      {(vh.glucose || vh.weight) && (
+                        <div className="flex gap-3 text-[11px] text-slate-400 mt-1 pt-1 border-t border-white/5 font-mono">
+                          {vh.glucose && <span>Glucose: {vh.glucose} mg/dL</span>}
+                          {vh.weight && <span>Weight: {vh.weight} kg</span>}
+                        </div>
+                      )}
                     </div>
                   ))
                 ) : (
-                  <p className="text-xs text-slate-500 italic">No vitals readings logged yet.</p>
+                  <div className="p-4 rounded-xl bg-white/[0.01] border border-white/5 text-center space-y-1">
+                    <p className="text-xs text-slate-300 font-medium">No vitals readings logged yet.</p>
+                    <p className="text-[11px] text-slate-500 leading-relaxed">
+                      As soon as the patient records biometric vitals on their passport, they will synchronize and display here automatically.
+                    </p>
+                  </div>
                 )}
               </div>
             </div>
@@ -2508,6 +2589,9 @@ function MessagesSection({
   onSendTemplate,
   onOpenUnlockModal
 }: any) {
+  const [showPatientListOnMobile, setShowPatientListOnMobile] = useState(false);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+
   if (!patients || patients.length === 0) {
     return (
       <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="h-[calc(100vh-140px)] flex flex-col items-center justify-center p-8 text-center rounded-2xl bg-white/[0.03] border border-white/10 backdrop-blur-md space-y-4">
@@ -2534,11 +2618,21 @@ function MessagesSection({
   const activePatient = patients.find((p: Patient) => p.id === selectedPatientId) || patients[0];
   const patientMessages = Array.isArray(messages) ? messages : (messages[activePatient?.id] || []);
 
+  // Auto-scroll on new message
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [patientMessages]);
+
   return (
-    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="h-[calc(100vh-140px)] flex rounded-2xl bg-white/[0.03] border border-white/10 backdrop-blur-md overflow-hidden">
-      {/* Patient Conversations List */}
-      <div className="w-80 border-r border-white/10 flex flex-col bg-white/[0.01]">
-        <div className="p-4 border-b border-white/10 flex items-center justify-between">
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="h-[calc(100dvh-7.5rem)] sm:h-[calc(100vh-140px)] min-h-[420px] flex rounded-2xl bg-white/[0.03] border border-white/10 backdrop-blur-md overflow-hidden relative">
+      {/* Patient Conversations List - Collapsible on Mobile */}
+      <div
+        className={cn(
+          'w-full md:w-80 border-r border-white/10 flex flex-col bg-white/[0.01] shrink-0 h-full',
+          activePatient && !showPatientListOnMobile ? 'hidden md:flex' : 'flex'
+        )}
+      >
+        <div className="p-3.5 sm:p-4 border-b border-white/10 flex items-center justify-between shrink-0">
           <div>
             <h3 className="font-bold text-white text-sm">Secure Patient Chats</h3>
             <p className="text-[11px] text-slate-400">HIPAA/NDPR direct messaging</p>
@@ -2552,7 +2646,10 @@ function MessagesSection({
           {patients.map((p: Patient) => (
             <button
               key={p.id}
-              onClick={() => setSelectedPatientId(p.id)}
+              onClick={() => {
+                setSelectedPatientId(p.id);
+                setShowPatientListOnMobile(false);
+              }}
               className={cn(
                 'w-full p-3 rounded-xl text-left transition flex items-center gap-3',
                 (selectedPatientId === p.id || (!selectedPatientId && p.id === activePatient?.id))
@@ -2573,22 +2670,37 @@ function MessagesSection({
       </div>
 
       {/* Chat Thread */}
-      <div className="flex-1 flex flex-col bg-gradient-to-b from-[#0a0f1d] to-[#0c1322]">
+      <div
+        className={cn(
+          'flex-1 flex flex-col bg-gradient-to-b from-[#0a0f1d] to-[#0c1322] min-w-0 h-full overflow-hidden',
+          !activePatient || showPatientListOnMobile ? 'hidden md:flex' : 'flex'
+        )}
+      >
         {/* Header */}
-        <div className="p-4 border-b border-white/10 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-full bg-teal-500/20 text-teal-300 flex items-center justify-center text-xs font-bold">
+        <div className="p-3 sm:p-4 border-b border-white/10 flex items-center justify-between flex-shrink-0 bg-slate-950/70 backdrop-blur z-10">
+          <div className="flex items-center gap-2.5 sm:gap-3 min-w-0">
+            {patients.length > 1 && (
+              <button
+                type="button"
+                onClick={() => setShowPatientListOnMobile(true)}
+                className="md:hidden p-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 transition shrink-0"
+                title="Switch patient"
+              >
+                <ChevronLeft className="w-4 h-4" />
+              </button>
+            )}
+            <div className="w-8 h-8 rounded-full bg-teal-500/20 text-teal-300 flex items-center justify-center text-xs font-bold shrink-0">
               {activePatient?.name?.charAt(0)}
             </div>
-            <div>
-              <h4 className="font-bold text-xs text-white">{activePatient?.name}</h4>
-              <p className="text-[10px] text-teal-400 font-mono">{activePatient?.pid}</p>
+            <div className="min-w-0">
+              <h4 className="font-bold text-xs text-white truncate">{activePatient?.name}</h4>
+              <p className="text-[10px] text-teal-400 font-mono truncate">{activePatient?.pid}</p>
             </div>
           </div>
         </div>
 
         {/* Quick Response Templates */}
-        <div className="px-4 py-2 border-b border-white/5 flex gap-2 overflow-x-auto text-xs">
+        <div className="px-3 sm:px-4 py-2 border-b border-white/5 flex gap-2 overflow-x-auto text-xs flex-shrink-0 bg-white/[0.01]">
           <button
             onClick={() => onSendTemplate('Your latest lab results look normal and stable.')}
             className="px-2.5 py-1 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 text-[11px] shrink-0 border border-white/5"
@@ -2610,7 +2722,7 @@ function MessagesSection({
         </div>
 
         {/* Message Bubble List */}
-        <div className="flex-1 overflow-y-auto p-4 space-y-3">
+        <div className="flex-1 min-h-0 overflow-y-auto p-3 sm:p-4 space-y-3">
           {patientMessages.length === 0 ? (
             <div className="h-full flex flex-col items-center justify-center text-center p-6 space-y-2 text-slate-500">
               <MessageSquare className="w-8 h-8 opacity-40" />
@@ -2626,7 +2738,7 @@ function MessagesSection({
                 >
                   <div
                     className={cn(
-                      'max-w-[75%] px-4 py-2.5 rounded-2xl text-xs leading-relaxed',
+                      'max-w-[85%] sm:max-w-[75%] px-3.5 sm:px-4 py-2.5 rounded-2xl text-xs leading-relaxed break-words',
                       isDoctor
                         ? 'bg-gradient-to-r from-teal-500 to-cyan-600 text-slate-950 font-medium rounded-br-none'
                         : 'bg-white/10 text-slate-200 rounded-bl-none border border-white/10'
@@ -2639,21 +2751,22 @@ function MessagesSection({
               );
             })
           )}
+          <div ref={messagesEndRef} />
         </div>
 
-        {/* Input Bar */}
-        <div className="p-3 border-t border-white/10 flex items-center gap-2">
+        {/* Input Bar (Sticky, Never Cut Off on Mobile) */}
+        <div className="p-2.5 sm:p-3 border-t border-white/10 bg-slate-950/95 backdrop-blur flex items-center gap-2 flex-shrink-0 sticky bottom-0 z-20">
           <input
             type="text"
             value={input}
             onChange={e => setInput(e.target.value)}
             onKeyDown={e => e.key === 'Enter' && onSendMessage()}
             placeholder="Type a clinical reply..."
-            className="flex-1 px-4 py-2.5 rounded-xl bg-white/5 border border-white/10 text-white text-xs placeholder-slate-500 focus:outline-none focus:border-teal-500"
+            className="flex-1 px-3.5 py-2.5 rounded-xl bg-white/5 border border-white/10 text-white text-xs placeholder-slate-500 focus:outline-none focus:border-teal-500"
           />
           <button
             onClick={onSendMessage}
-            className="p-2.5 rounded-xl bg-teal-500 text-slate-950 hover:brightness-110 transition font-bold"
+            className="p-2.5 rounded-xl bg-teal-500 text-slate-950 hover:brightness-110 transition font-bold shrink-0 cursor-pointer"
           >
             <Send className="w-4 h-4" />
           </button>

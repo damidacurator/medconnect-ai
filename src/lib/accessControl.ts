@@ -35,6 +35,7 @@ export interface PatientAccessRecord {
   bloodGroup?: string;
   phone?: string;
   authorizedDoctors: AuthorizedDoctor[];
+  vitalsHistory?: any[];
   updatedAt: string;
 }
 
@@ -550,55 +551,110 @@ export async function unlockPatientWithPin(
   registry[record.accessCode] = record;
   saveRegistry(registry);
 
-  // Sync to Supabase in background
+  // Sync to Supabase access_grants and patient_access_codes
   try {
-    supabase
-      .from('patient_access_codes')
-      .upsert({
-        patient_id: record.patientId,
-        access_code: record.patientPid,
-        authorized_doctors: record.authorizedDoctors,
-        updated_at: new Date().toISOString(),
-      })
-      .then(() => {}, () => {});
-
-    supabase
+    // 1. Check if an active grant already exists for this doctor
+    const { data: existingGrant } = await supabase
       .from('access_grants')
-      .upsert({
+      .select('id')
+      .eq('patient_id', record.patientId)
+      .eq('granted_to_id', doctorInfo.doctorId)
+      .is('revoked_at', null)
+      .maybeSingle();
+
+    if (!existingGrant) {
+      await supabase.from('access_grants').insert({
         patient_id: record.patientId,
         granted_to_id: doctorInfo.doctorId,
         granted_to_role: 'doctor',
         access_level: 'full',
         created_at: new Date().toISOString(),
-      })
-      .then(() => {}, () => {});
-  } catch {
-    // ignore
+      });
+    }
+
+    // 2. Also keep patient_access_codes synced
+    await supabase.from('patient_access_codes').upsert({
+      patient_id: record.patientId,
+      access_code: record.patientPid,
+      authorized_doctors: record.authorizedDoctors,
+      updated_at: new Date().toISOString(),
+    });
+  } catch (syncErr) {
+    console.warn('Supabase access grant sync note:', syncErr);
   }
+
+  // 3. Fetch live vitals for this unlocked patient from Supabase & local cache
+  let vitalsHistory: any[] = [];
+  try {
+    const { data: vRows } = await supabase
+      .from('health_vitals')
+      .select('*')
+      .eq('patient_id', record.patientId)
+      .order('recorded_at', { ascending: false })
+      .limit(30);
+
+    if (Array.isArray(vRows) && vRows.length > 0) {
+      vitalsHistory = vRows.map((r: any) => ({
+        date: new Date(r.recorded_at).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' }) + ' ' + new Date(r.recorded_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        bp: `${r.systolic_bp || 120}/${r.diastolic_bp || 80}`,
+        hr: r.heart_rate || 72,
+        temp: Number(r.temperature) || 36.6,
+        spo2: Number(r.oxygen_saturation) || 98,
+        glucose: r.blood_glucose ? Number(r.blood_glucose) : undefined,
+        weight: r.weight_kg ? Number(r.weight_kg) : undefined,
+      }));
+    } else {
+      const localKey = 'medconnect_health_vitals';
+      const raw = localStorage.getItem(localKey);
+      if (raw) {
+        const list = JSON.parse(raw);
+        const userRows = list.filter((r: any) => r.patient_id === record!.patientId);
+        if (userRows.length > 0) {
+          vitalsHistory = userRows.map((r: any) => ({
+            date: new Date(r.recorded_at).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' }) + ' ' + new Date(r.recorded_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+            bp: `${r.systolic_bp || 120}/${r.diastolic_bp || 80}`,
+            hr: r.heart_rate || 72,
+            temp: Number(r.temperature) || 36.6,
+            spo2: Number(r.oxygen_saturation) || 98,
+            glucose: r.blood_glucose ? Number(r.blood_glucose) : undefined,
+            weight: r.weight_kg ? Number(r.weight_kg) : undefined,
+          }));
+        }
+      }
+    }
+  } catch (vErr) {
+    console.warn('Error fetching vitals for unlocked patient:', vErr);
+  }
+
+  record.vitalsHistory = vitalsHistory;
 
   // Cache in doctor's unlocked list
   try {
     const docKey = `medconnect_doctor_unlocked_${doctorInfo.doctorId}`;
     const raw = localStorage.getItem(docKey);
     const list: any[] = raw ? JSON.parse(raw) : [];
-    const exists = list.some(p => p.id === record!.patientId);
-    if (!exists) {
-      list.push({
-        id: record.patientId,
-        name: record.patientName,
-        pid: record.patientPid,
-        age: record.age ?? null,
-        gender: record.gender ?? 'Not specified',
-        bloodGroup: record.bloodGroup ?? 'Not specified',
-        phone: record.phone || '',
-        email: record.email || '',
-        allergies: [],
-        chronicConditions: [],
-        vitalsHistory: [],
-        lastVisit: 'Today',
-      });
-      localStorage.setItem(docKey, JSON.stringify(list));
+    const existingIdx = list.findIndex(p => p.id === record!.patientId);
+    const patEntry = {
+      id: record.patientId,
+      name: record.patientName,
+      pid: record.patientPid,
+      age: record.age ?? null,
+      gender: record.gender ?? 'Not specified',
+      bloodGroup: record.bloodGroup ?? 'Not specified',
+      phone: record.phone || '',
+      email: record.email || '',
+      allergies: [],
+      chronicConditions: [],
+      vitalsHistory,
+      lastVisit: 'Today',
+    };
+
+    if (existingIdx >= 0) {
+      list[existingIdx] = patEntry;
+    } else {
+      list.push(patEntry);
     }
+    localStorage.setItem(docKey, JSON.stringify(list));
   } catch (err) {
     console.error('Failed to update doctor unlocked cache', err);
   }
@@ -681,6 +737,51 @@ export async function fetchDoctorUnlockedPatients(doctorId: string): Promise<any
             lastVisit: 'Connected',
           });
         }
+      }
+    }
+
+    // Now populate live vitals from health_vitals for every patient
+    for (const p of patientMap.values()) {
+      try {
+        const { data: vRows } = await supabase
+          .from('health_vitals')
+          .select('*')
+          .eq('patient_id', p.id)
+          .order('recorded_at', { ascending: false })
+          .limit(30);
+
+        if (Array.isArray(vRows) && vRows.length > 0) {
+          p.vitalsHistory = vRows.map((r: any) => ({
+            date: new Date(r.recorded_at).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' }) + ' ' + new Date(r.recorded_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+            bp: `${r.systolic_bp || 120}/${r.diastolic_bp || 80}`,
+            hr: r.heart_rate || 72,
+            temp: Number(r.temperature) || 36.6,
+            spo2: Number(r.oxygen_saturation) || 98,
+            glucose: r.blood_glucose ? Number(r.blood_glucose) : undefined,
+            weight: r.weight_kg ? Number(r.weight_kg) : undefined,
+          }));
+        } else {
+          // Check local cache
+          const localKey = 'medconnect_health_vitals';
+          const raw = localStorage.getItem(localKey);
+          if (raw) {
+            const list = JSON.parse(raw);
+            const userRows = list.filter((r: any) => r.patient_id === p.id);
+            if (userRows.length > 0) {
+              p.vitalsHistory = userRows.map((r: any) => ({
+                date: new Date(r.recorded_at).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' }) + ' ' + new Date(r.recorded_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+                bp: `${r.systolic_bp || 120}/${r.diastolic_bp || 80}`,
+                hr: r.heart_rate || 72,
+                temp: Number(r.temperature) || 36.6,
+                spo2: Number(r.oxygen_saturation) || 98,
+                glucose: r.blood_glucose ? Number(r.blood_glucose) : undefined,
+                weight: r.weight_kg ? Number(r.weight_kg) : undefined,
+              }));
+            }
+          }
+        }
+      } catch {
+        // fallback
       }
     }
   } catch (err) {

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useId, useMemo } from 'react';
+import React, { useState, useEffect, useId, useMemo, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Activity,
@@ -23,6 +23,7 @@ import {
   TrendingUp,
   AlertTriangle,
   ChevronRight,
+  ChevronLeft,
   Send,
   Download,
   Filter,
@@ -2512,10 +2513,17 @@ interface MessagesSectionProps {
 function MessagesSection({ userId, patientPid, patientName, onShowToast, onNavigate }: MessagesSectionProps) {
   const [authorizedDoctors, setAuthorizedDoctors] = useState<AuthorizedDoctor[]>([]);
   const [selectedDoctorId, setSelectedDoctorId] = useState<string>('');
+  const [showDoctorListOnMobile, setShowDoctorListOnMobile] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inputText, setInputText] = useState('');
   const [isSending, setIsSending] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  // Auto-scroll to latest message
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
 
   // 1. Sync connected doctors from Supabase cloud + messages table
   useEffect(() => {
@@ -2679,10 +2687,15 @@ function MessagesSection({ userId, patientPid, patientName, onShowToast, onNavig
   }
 
   return (
-    <div className="h-[calc(100vh-12rem)] min-h-[500px] rounded-3xl bg-slate-900/60 border border-slate-800/80 backdrop-blur-xl flex flex-col md:flex-row overflow-hidden">
-      {/* Doctor Conversations List */}
-      <div className="w-full md:w-80 border-r border-slate-800 flex flex-col">
-        <div className="p-4 border-b border-slate-800 flex items-center justify-between">
+    <div className="h-[calc(100dvh-7.5rem)] sm:h-[calc(100vh-11rem)] min-h-[420px] rounded-2xl md:rounded-3xl bg-slate-900/60 border border-slate-800/80 backdrop-blur-xl flex flex-col md:flex-row overflow-hidden relative">
+      {/* Doctor Conversations List - Collapsible on mobile when chatting */}
+      <div
+        className={cn(
+          'w-full md:w-80 border-r border-slate-800 flex flex-col bg-slate-950/60 shrink-0 h-full',
+          activeDoc && !showDoctorListOnMobile ? 'hidden md:flex' : 'flex'
+        )}
+      >
+        <div className="p-3.5 sm:p-4 border-b border-slate-800 flex items-center justify-between shrink-0">
           <h3 className="font-bold text-white text-sm">Direct Messages</h3>
           <span className="text-[11px] text-teal-400 font-semibold">{authorizedDoctors.length} Connected</span>
         </div>
@@ -2701,9 +2714,12 @@ function MessagesSection({ userId, patientPid, patientName, onShowToast, onNavig
             return (
               <div
                 key={doc.doctorId}
-                onClick={() => setSelectedDoctorId(doc.doctorId)}
+                onClick={() => {
+                  setSelectedDoctorId(doc.doctorId);
+                  setShowDoctorListOnMobile(false);
+                }}
                 className={cn(
-                  'p-4 flex items-start gap-3 cursor-pointer transition',
+                  'p-3.5 sm:p-4 flex items-start gap-3 cursor-pointer transition',
                   isSelected
                     ? 'bg-teal-500/10 border-l-4 border-teal-400'
                     : 'hover:bg-slate-800/40'
@@ -2728,32 +2744,49 @@ function MessagesSection({ userId, patientPid, patientName, onShowToast, onNavig
         </div>
       </div>
 
-      {/* Chat Thread & Input */}
-      <div className="flex-1 flex flex-col bg-slate-950/40">
+      {/* Chat Thread & Input - Takes 100% of height on mobile */}
+      <div
+        className={cn(
+          'flex-1 flex flex-col bg-slate-950/40 min-w-0 h-full overflow-hidden',
+          !activeDoc || showDoctorListOnMobile ? 'hidden md:flex' : 'flex'
+        )}
+      >
         {activeDoc ? (
           <>
             {/* Chat Header */}
-            <div className="p-4 border-b border-slate-800 flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className="w-9 h-9 rounded-full bg-teal-500/20 text-teal-300 font-bold flex items-center justify-center text-xs">
+            <div className="p-3 sm:p-4 border-b border-slate-800 flex items-center justify-between flex-shrink-0 bg-slate-950/70 backdrop-blur z-10">
+              <div className="flex items-center gap-2.5 sm:gap-3 min-w-0">
+                {authorizedDoctors.length > 1 && (
+                  <button
+                    type="button"
+                    onClick={() => setShowDoctorListOnMobile(true)}
+                    className="md:hidden p-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 transition shrink-0"
+                    title="Switch doctor thread"
+                  >
+                    <ChevronLeft className="w-4 h-4" />
+                  </button>
+                )}
+                <div className="w-8 sm:w-9 h-8 sm:h-9 rounded-full bg-teal-500/20 text-teal-300 font-bold flex items-center justify-center text-xs shrink-0">
                   {activeDoc.doctorName.slice(0, 2).toUpperCase()}
                 </div>
-                <div>
-                  <h4 className="text-xs font-bold text-white">{activeDoc.doctorName}</h4>
-                  <p className="text-[11px] text-teal-400">{activeDoc.specialization} • {activeDoc.hospital}</p>
+                <div className="min-w-0">
+                  <h4 className="text-xs font-bold text-white truncate">{activeDoc.doctorName}</h4>
+                  <p className="text-[10px] sm:text-[11px] text-teal-400 truncate">
+                    {activeDoc.specialization} • {activeDoc.hospital}
+                  </p>
                 </div>
               </div>
               <button
                 type="button"
                 onClick={() => onShowToast('Telehealth', `Connecting secure audio line with ${activeDoc.doctorName}...`)}
-                className="px-3 py-1.5 rounded-xl bg-teal-500/10 hover:bg-teal-500/20 text-teal-300 border border-teal-500/30 text-xs font-semibold transition"
+                className="px-2.5 sm:px-3 py-1.5 rounded-xl bg-teal-500/10 hover:bg-teal-500/20 text-teal-300 border border-teal-500/30 text-[11px] sm:text-xs font-semibold transition shrink-0"
               >
                 Audio Call
               </button>
             </div>
 
             {/* Messages Body */}
-            <div className="flex-1 overflow-y-auto p-4 space-y-3">
+            <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden p-3 sm:p-4 space-y-3">
               {messages.length === 0 ? (
                 <div className="py-12 text-center space-y-2">
                   <MessageSquare className="w-8 h-8 text-slate-600 mx-auto" />
@@ -2775,7 +2808,7 @@ function MessagesSection({ userId, patientPid, patientName, onShowToast, onNavig
                       </span>
                       <div
                         className={cn(
-                          'max-w-md p-3.5 rounded-2xl text-xs leading-relaxed',
+                          'max-w-[85%] sm:max-w-md p-3 sm:p-3.5 rounded-2xl text-xs leading-relaxed break-words',
                           isPatient
                             ? 'bg-gradient-to-r from-teal-500 to-cyan-500 text-slate-950 font-medium rounded-br-sm'
                             : 'bg-slate-800/90 text-slate-100 border border-slate-700/60 rounded-bl-sm shadow'
@@ -2787,22 +2820,23 @@ function MessagesSection({ userId, patientPid, patientName, onShowToast, onNavig
                   );
                 })
               )}
+              <div ref={messagesEndRef} />
             </div>
 
-            {/* Input Bar */}
-            <form onSubmit={handleSendMessage} className="p-3 border-t border-slate-800 flex items-center gap-2">
+            {/* Input Bar (Sticky, Guaranteed Visible on Mobile) */}
+            <form onSubmit={handleSendMessage} className="p-2.5 sm:p-3 border-t border-slate-800 bg-slate-950/95 backdrop-blur flex items-center gap-2 flex-shrink-0 sticky bottom-0 z-20">
               <input
                 type="text"
                 placeholder={`Message ${activeDoc.doctorName}...`}
                 value={inputText}
                 onChange={e => setInputText(e.target.value)}
                 disabled={isSending}
-                className="flex-1 px-4 py-2.5 rounded-xl bg-slate-900 border border-slate-700 text-sm text-slate-100 focus:border-teal-400 outline-none"
+                className="flex-1 px-3.5 py-2.5 rounded-xl bg-slate-900 border border-slate-700 text-xs sm:text-sm text-slate-100 focus:border-teal-400 outline-none"
               />
               <button
                 type="submit"
                 disabled={isSending || !inputText.trim()}
-                className="p-2.5 rounded-xl bg-teal-500 hover:bg-teal-400 text-slate-950 font-bold transition shadow disabled:opacity-50 cursor-pointer"
+                className="p-2.5 rounded-xl bg-teal-500 hover:bg-teal-400 text-slate-950 font-bold transition shadow disabled:opacity-50 cursor-pointer shrink-0"
               >
                 <Send className="w-4 h-4" />
               </button>
