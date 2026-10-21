@@ -363,45 +363,12 @@ export async function getAllDoctorProfiles() {
       .eq('role', 'doctor')
       .order('full_name', { ascending: true });
 
-    if (!error && data && data.length > 0) return data;
-  } catch {
-    // fallback
+    if (!error && data) return data;
+  } catch (err) {
+    console.warn('Error fetching doctor profiles:', err);
   }
 
-  return [
-    {
-      id: 'doc-1',
-      full_name: 'Dr. Sarah Chen, MD',
-      role: 'doctor',
-      specialization: 'Cardiologist',
-      experience: 12,
-      avatar_url: 'https://images.unsplash.com/photo-1559839734-2b71ea197ec2?auto=format&fit=crop&q=80&w=300',
-    },
-    {
-      id: 'doc-2',
-      full_name: 'Dr. Marcus Vance, MD',
-      role: 'doctor',
-      specialization: 'Neurologist',
-      experience: 9,
-      avatar_url: 'https://images.unsplash.com/photo-1622253692010-333f2da6031d?auto=format&fit=crop&q=80&w=300',
-    },
-    {
-      id: 'doc-3',
-      full_name: 'Dr. Elena Rostova, MD',
-      role: 'doctor',
-      specialization: 'General Physician',
-      experience: 15,
-      avatar_url: 'https://images.unsplash.com/photo-1594824813515-0b0b8dbd1573?auto=format&fit=crop&q=80&w=300',
-    },
-    {
-      id: 'doc-4',
-      full_name: 'Dr. David Adebayo, MD',
-      role: 'doctor',
-      specialization: 'Endocrinologist',
-      experience: 11,
-      avatar_url: 'https://images.unsplash.com/photo-1612349317150-e413f6a5b16d?auto=format&fit=crop&q=80&w=300',
-    },
-  ];
+  return [];
 }
 
 export async function updateProfile(

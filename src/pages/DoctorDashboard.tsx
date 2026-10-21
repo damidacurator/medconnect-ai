@@ -55,7 +55,8 @@ import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/lib/supabase';
 import { DiagnosticImagingVault } from '@/components/medical/DiagnosticImagingVault';
-import { unlockPatientWithPin } from '@/lib/accessControl';
+import { unlockPatientWithPin, fetchDoctorUnlockedPatients } from '@/lib/accessControl';
+import { fetchMessages, sendChatMessage, getUnreadMessagesCount, markMessagesAsRead, type ChatMessage } from '@/lib/messaging';
 
 // Types
 export interface Patient {
@@ -183,6 +184,24 @@ export function DoctorDashboard() {
   const [consultations, setConsultations] = useState<ConsultationRecord[]>(INITIAL_CONSULTATIONS);
   const [selectedPatientForRecord, setSelectedPatientForRecord] = useState<Patient | null>(null);
 
+  // Auto-sync unlocked patients from Supabase cloud
+  useEffect(() => {
+    let isMounted = true;
+    async function loadUnlocked() {
+      if (!user?.id) return;
+      try {
+        const loaded = await fetchDoctorUnlockedPatients(user.id);
+        if (isMounted && Array.isArray(loaded)) {
+          setPatients(loaded);
+        }
+      } catch (err) {
+        console.warn('Error loading doctor unlocked patients:', err);
+      }
+    }
+    loadUnlocked();
+    return () => { isMounted = false; };
+  }, [user?.id]);
+
   // Unlock PIN Modal State
   const [isUnlockModalOpen, setIsUnlockModalOpen] = useState(false);
   const [pinInput, setPinInput] = useState('');
@@ -225,14 +244,14 @@ export function DoctorDashboard() {
     }
   }, [profile, user]);
 
-  const handleUnlockWithPin = (e?: React.FormEvent) => {
+  const handleUnlockWithPin = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     if (!pinInput.trim()) {
       showToast('Please enter the patient’s unique Patient ID (e.g. PID-9B2F4C1A).');
       return;
     }
     setIsUnlocking(true);
-    const result = unlockPatientWithPin(pinInput.trim(), {
+    const result = await unlockPatientWithPin(pinInput.trim(), {
       doctorId: user?.id || 'doc-1',
       doctorName: doctorProfile.name,
       hospital: doctorProfile.hospital,
@@ -246,9 +265,9 @@ export function DoctorDashboard() {
         id: pat.patientId,
         name: pat.patientName,
         pid: pat.patientPid,
-        age: Number(pat.age) || 32,
+        age: Number(pat.age) || 0,
         gender: (pat.gender as any) || 'Other',
-        bloodGroup: pat.bloodGroup || 'O+',
+        bloodGroup: pat.bloodGroup || 'Not specified',
         phone: pat.phone || '',
         email: pat.email || '',
         allergies: [],
@@ -270,12 +289,13 @@ export function DoctorDashboard() {
       });
 
       setSelectedPatientForRecord(newPat);
+      setSelectedChatPatientId(newPat.id);
       setIsUnlockModalOpen(false);
       setPinInput('');
       setActiveTab('records');
       showToast(`Record Unlocked: Access granted for ${pat.patientName}. Vitals & scans now accessible.`);
     } else {
-      showToast(result.error || 'Invalid PIN. Please ask the patient for an active 6-digit access code.');
+      showToast(result.error || 'Invalid Patient ID. Please check the exact ID with the patient.');
     }
   };
 
@@ -294,10 +314,53 @@ export function DoctorDashboard() {
     vacationMode: false
   });
 
-  // Messaging state
+  // Messaging state - powered by real Supabase / local messaging
   const [selectedChatPatientId, setSelectedChatPatientId] = useState<string>('');
-  const [chatMessages, setChatMessages] = useState<Record<string, MessageItem[]>>({});
+  const [currentChatMessages, setCurrentChatMessages] = useState<ChatMessage[]>([]);
   const [chatInput, setChatInput] = useState('');
+  const [unreadMessagesCount, setUnreadMessagesCount] = useState<number>(0);
+  const [isSendingMessage, setIsSendingMessage] = useState(false);
+
+  // Poll for unread message notifications
+  useEffect(() => {
+    let isMounted = true;
+    const checkUnread = async () => {
+      if (!user?.id) return;
+      try {
+        const count = await getUnreadMessagesCount(user.id);
+        if (isMounted) setUnreadMessagesCount(count);
+      } catch {
+        // ignore
+      }
+    };
+    checkUnread();
+    const interval = setInterval(checkUnread, 4000);
+    return () => { isMounted = false; clearInterval(interval); };
+  }, [user?.id]);
+
+  // Load chat messages when selectedChatPatientId changes, and poll for new messages
+  useEffect(() => {
+    let isMounted = true;
+    if (!user?.id || !selectedChatPatientId) {
+      setCurrentChatMessages([]);
+      return;
+    }
+
+    const loadMsgs = async () => {
+      try {
+        const msgs = await fetchMessages(user.id, selectedChatPatientId, user.id);
+        if (isMounted) setCurrentChatMessages(msgs);
+        await markMessagesAsRead(selectedChatPatientId, user.id);
+        setUnreadMessagesCount(prev => Math.max(0, prev - 1));
+      } catch (err) {
+        console.warn('Error loading messages:', err);
+      }
+    };
+
+    loadMsgs();
+    const interval = setInterval(loadMsgs, 3000);
+    return () => { isMounted = false; clearInterval(interval); };
+  }, [user?.id, selectedChatPatientId]);
 
   // Consultation Builder Flow State
   const [consultationStep, setConsultationStep] = useState<number>(1);
@@ -516,44 +579,43 @@ export function DoctorDashboard() {
     }, 1400);
   };
 
-  // Send message
-  const handleSendMessage = () => {
-    if (!chatInput.trim()) return;
-    const newMsg: MessageItem = {
-      id: `m-${Date.now()}`,
-      sender: 'doctor',
-      text: chatInput.trim(),
-      timestamp: 'Just now'
-    };
-    setChatMessages(prev => ({
-      ...prev,
-      [selectedChatPatientId]: [...(prev[selectedChatPatientId] || []), newMsg]
-    }));
+  // Send message using real Supabase & local cache
+  const handleSendMessage = async () => {
+    if (!chatInput.trim() || !user?.id || !selectedChatPatientId || isSendingMessage) return;
+    const textToSend = chatInput.trim();
     setChatInput('');
+    setIsSendingMessage(true);
+    try {
+      const sent = await sendChatMessage(user.id, selectedChatPatientId, textToSend, 'doctor');
+      setCurrentChatMessages(prev => [...prev, sent]);
+    } catch (err) {
+      console.error('Failed to send message:', err);
+    } finally {
+      setIsSendingMessage(false);
+    }
   };
 
-  // Quick message template
-  const sendQuickTemplate = (tmpl: string) => {
-    const newMsg: MessageItem = {
-      id: `m-${Date.now()}`,
-      sender: 'doctor',
-      text: tmpl,
-      timestamp: 'Just now'
-    };
-    setChatMessages(prev => ({
-      ...prev,
-      [selectedChatPatientId]: [...(prev[selectedChatPatientId] || []), newMsg]
-    }));
+  // Quick message template using real Supabase & local cache
+  const sendQuickTemplate = async (tmpl: string) => {
+    if (!user?.id || !selectedChatPatientId) return;
+    try {
+      const sent = await sendChatMessage(user.id, selectedChatPatientId, tmpl, 'doctor');
+      setCurrentChatMessages(prev => [...prev, sent]);
+    } catch (err) {
+      console.error('Failed to send template message:', err);
+    }
   };
 
-  // Render navigation items
+  const waitingCount = appointments.filter(a => a.status === 'Waiting').length;
+
+  // Render navigation items with real dynamic badges (zero mock counters)
   const navItems = [
     { id: 'overview', label: 'Overview', icon: LayoutDashboard },
-    { id: 'queue', label: 'Patient Queue', icon: Users, badge: appointments.filter(a => a.status === 'Waiting').length },
+    { id: 'queue', label: 'Patient Queue', icon: Users, badge: waitingCount > 0 ? waitingCount : undefined },
     { id: 'consultations', label: 'Consultations', icon: Stethoscope },
     { id: 'records', label: 'Patient Records', icon: FileText },
     { id: 'appointments', label: 'Appointments', icon: Calendar },
-    { id: 'messages', label: 'Messages', icon: MessageSquare, badge: 2 },
+    { id: 'messages', label: 'Messages', icon: MessageSquare, badge: unreadMessagesCount > 0 ? unreadMessagesCount : undefined },
     { id: 'ai', label: 'AI Workspace', icon: Bot, isSparkle: true },
     { id: 'schedule', label: 'Schedule', icon: Clock },
     { id: 'profile', label: 'My Profile', icon: UserCheck },
@@ -879,11 +941,12 @@ export function DoctorDashboard() {
                 patients={patients}
                 selectedPatientId={selectedChatPatientId}
                 setSelectedPatientId={setSelectedChatPatientId}
-                messages={chatMessages}
+                messages={currentChatMessages}
                 input={chatInput}
                 setInput={setChatInput}
                 onSendMessage={handleSendMessage}
                 onSendTemplate={sendQuickTemplate}
+                onOpenUnlockModal={() => setIsUnlockModalOpen(true)}
               />
             )}
 
@@ -891,7 +954,7 @@ export function DoctorDashboard() {
               <AiWorkspaceSection
                 key="ai"
                 patients={patients}
-                selectedPatientId={aiSelectedPatientId}
+                selectedPatientId={aiSelectedPatientId || (patients[0]?.id || '')}
                 setSelectedPatientId={setAiSelectedPatientId}
                 loading={aiAnalysisLoading}
                 riskData={aiRiskData}
@@ -906,6 +969,7 @@ export function DoctorDashboard() {
                 setRawNote={setAiNoteRawText}
                 extractedNote={extractedAiNote}
                 onExtractNote={handleExtractNote}
+                onOpenUnlockModal={() => setIsUnlockModalOpen(true)}
               />
             )}
 
@@ -1053,9 +1117,9 @@ function OverviewSection({
             </div>
           </div>
           <div className="mt-3 flex items-baseline gap-2">
-            <span className="text-2xl font-bold text-white">{patients.length + 144}</span>
-            <span className="text-xs text-teal-400 font-medium flex items-center">
-              <TrendingUp className="w-3 h-3 mr-0.5" /> +12% this mo
+            <span className="text-2xl font-bold text-white">{patients.length}</span>
+            <span className="text-xs text-slate-400 font-medium">
+              {patients.length > 0 ? 'Connected patient charts' : 'No patients linked yet'}
             </span>
           </div>
           <div className="absolute -bottom-6 -right-6 w-20 h-20 bg-teal-500/5 rounded-full blur-xl pointer-events-none" />
@@ -1070,7 +1134,9 @@ function OverviewSection({
           </div>
           <div className="mt-3 flex items-baseline gap-2">
             <span className="text-2xl font-bold text-white">{appointments.length}</span>
-            <span className="text-xs text-cyan-400 font-medium">{waitingCount} waiting in lobby</span>
+            <span className="text-xs text-cyan-400 font-medium">
+              {appointments.length > 0 ? `${waitingCount} waiting in lobby` : '0 scheduled today'}
+            </span>
           </div>
           <div className="absolute -bottom-6 -right-6 w-20 h-20 bg-cyan-500/5 rounded-full blur-xl pointer-events-none" />
         </div>
@@ -1083,8 +1149,8 @@ function OverviewSection({
             </div>
           </div>
           <div className="mt-3 flex items-baseline gap-2">
-            <span className="text-2xl font-bold text-white">3</span>
-            <span className="text-xs text-amber-300 font-medium">Lab & ECG reports</span>
+            <span className="text-2xl font-bold text-white">0</span>
+            <span className="text-xs text-slate-400 font-medium">0 pending reviews</span>
           </div>
           <div className="absolute -bottom-6 -right-6 w-20 h-20 bg-amber-500/5 rounded-full blur-xl pointer-events-none" />
         </div>
@@ -1098,7 +1164,9 @@ function OverviewSection({
           </div>
           <div className="mt-3 flex items-baseline gap-2">
             <span className="text-2xl font-bold text-white">{consultations.length}</span>
-            <span className="text-xs text-emerald-400 font-medium">Logged in EMR</span>
+            <span className="text-xs text-emerald-400 font-medium">
+              {consultations.length > 0 ? 'Logged in EMR' : '0 logged in EMR'}
+            </span>
           </div>
           <div className="absolute -bottom-6 -right-6 w-20 h-20 bg-emerald-500/5 rounded-full blur-xl pointer-events-none" />
         </div>
@@ -1122,61 +1190,71 @@ function OverviewSection({
           </div>
 
           <div className="space-y-3">
-            {appointments.map(apt => {
-              const patient = patients.find(p => p.id === apt.patientId);
-              return (
-                <div
-                  key={apt.id}
-                  className="p-4 rounded-xl bg-white/[0.02] border border-white/5 hover:border-teal-500/30 transition flex flex-col sm:flex-row sm:items-center justify-between gap-3"
-                >
-                  <div className="flex items-start gap-3">
-                    <div className="w-10 h-10 rounded-xl bg-teal-500/10 border border-teal-500/20 flex items-center justify-center text-teal-300 font-bold text-xs shrink-0">
-                      {apt.time.split(' ')[0]}
-                    </div>
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <span className="font-semibold text-slate-200 text-sm">{apt.patientName}</span>
-                        <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-white/5 text-slate-400">
-                          {apt.pid}
-                        </span>
-                        <span
-                          className={cn(
-                            'text-[10px] px-2 py-0.5 rounded-full font-medium',
-                            apt.type === 'Emergency'
-                              ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
-                              : apt.type === 'Telehealth'
-                              ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30'
-                              : 'bg-teal-500/20 text-teal-300 border border-teal-500/30'
-                          )}
-                        >
-                          {apt.type}
-                        </span>
+            {appointments.length === 0 ? (
+              <div className="py-10 text-center space-y-2 rounded-xl bg-white/[0.01] border border-white/5">
+                <Users className="w-8 h-8 text-slate-600 mx-auto" />
+                <p className="text-sm font-semibold text-slate-200">No Patients in Queue</p>
+                <p className="text-xs text-slate-400 max-w-sm mx-auto">
+                  When appointments are booked or patient records are unlocked, they will appear here.
+                </p>
+              </div>
+            ) : (
+              appointments.map(apt => {
+                const patient = patients.find(p => p.id === apt.patientId);
+                return (
+                  <div
+                    key={apt.id}
+                    className="p-4 rounded-xl bg-white/[0.02] border border-white/5 hover:border-teal-500/30 transition flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+                  >
+                    <div className="flex items-start gap-3">
+                      <div className="w-10 h-10 rounded-xl bg-teal-500/10 border border-teal-500/20 flex items-center justify-center text-teal-300 font-bold text-xs shrink-0">
+                        {apt.time.split(' ')[0]}
                       </div>
-                      <p className="text-xs text-slate-400 mt-1 line-clamp-1">{apt.reason}</p>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="font-semibold text-slate-200 text-sm">{apt.patientName}</span>
+                          <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-white/5 text-slate-400">
+                            {apt.pid}
+                          </span>
+                          <span
+                            className={cn(
+                              'text-[10px] px-2 py-0.5 rounded-full font-medium',
+                              apt.type === 'Emergency'
+                                ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
+                                : apt.type === 'Telehealth'
+                                ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30'
+                                : 'bg-teal-500/20 text-teal-300 border border-teal-500/30'
+                            )}
+                          >
+                            {apt.type}
+                          </span>
+                        </div>
+                        <p className="text-xs text-slate-400 mt-1 line-clamp-1">{apt.reason}</p>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2 shrink-0">
+                      {patient && (
+                        <button
+                          onClick={() => onStartConsult(patient)}
+                          className="px-3 py-1.5 rounded-lg bg-teal-500/20 border border-teal-500/30 text-teal-300 hover:bg-teal-500/30 text-xs font-semibold flex items-center gap-1.5 transition"
+                        >
+                          <Stethoscope className="w-3.5 h-3.5" /> Start
+                        </button>
+                      )}
+                      {patient && (
+                        <button
+                          onClick={() => onSelectPatientRecord(patient)}
+                          className="px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 text-xs font-medium flex items-center gap-1 transition"
+                        >
+                          <FileText className="w-3.5 h-3.5" /> EMR
+                        </button>
+                      )}
                     </div>
                   </div>
-
-                  <div className="flex items-center gap-2 shrink-0">
-                    {patient && (
-                      <button
-                        onClick={() => onStartConsult(patient)}
-                        className="px-3 py-1.5 rounded-lg bg-teal-500/20 border border-teal-500/30 text-teal-300 hover:bg-teal-500/30 text-xs font-semibold flex items-center gap-1.5 transition"
-                      >
-                        <Stethoscope className="w-3.5 h-3.5" /> Start
-                      </button>
-                    )}
-                    {patient && (
-                      <button
-                        onClick={() => onSelectPatientRecord(patient)}
-                        className="px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 text-xs font-medium flex items-center gap-1 transition"
-                      >
-                        <FileText className="w-3.5 h-3.5" /> EMR
-                      </button>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
+                );
+              })
+            )}
           </div>
         </div>
 
@@ -1229,9 +1307,15 @@ function OverviewSection({
               <Sparkles className="w-4 h-4 text-teal-400" />
               <span>AI Clinical Triage Alert</span>
             </div>
-            <p className="text-xs text-slate-300 leading-relaxed">
-              Patient Fatima Bello flagged for high respiratory vulnerability. Peak flow reading and bronchodilator history available in AI Workspace.
-            </p>
+            {patients.length > 0 ? (
+              <p className="text-xs text-slate-300 leading-relaxed">
+                Connected with {patients[0].name} ({patients[0].pid}). Vitals baseline, clinical notes, and pharmacological risk analysis available in AI Workspace.
+              </p>
+            ) : (
+              <p className="text-xs text-slate-300 leading-relaxed">
+                No active clinical triage alerts. Connect with a patient using their permanent Patient ID (PID) to monitor vital trajectories and run AI clinical decision support.
+              </p>
+            )}
             <button
               onClick={() => onNavigateTab('ai')}
               className="mt-3 text-xs font-semibold text-teal-400 hover:text-teal-300 flex items-center gap-1"
@@ -1288,99 +1372,109 @@ function PatientQueueSection({
       </div>
 
       <div className="grid grid-cols-1 gap-4">
-        {filtered.map(apt => {
-          const patient = patients.find(p => p.id === apt.patientId);
-          return (
-            <div
-              key={apt.id}
-              className="p-5 rounded-2xl bg-white/[0.03] border border-white/10 hover:border-teal-500/30 transition flex flex-col md:flex-row md:items-center justify-between gap-4"
-            >
-              <div className="flex items-start gap-4">
-                <div className="w-12 h-12 rounded-2xl bg-teal-500/10 border border-teal-500/20 flex flex-col items-center justify-center text-teal-300 font-bold text-xs shrink-0">
-                  <Clock3 className="w-4 h-4 mb-0.5" />
-                  <span>{apt.time.split(' ')[0]}</span>
-                </div>
-                <div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <h4 className="font-bold text-base text-white">{apt.patientName}</h4>
-                    <span className="text-xs font-mono px-2.5 py-0.5 rounded bg-white/5 text-slate-300 border border-white/5">
-                      {apt.pid}
-                    </span>
-                    <span
-                      className={cn(
-                        'text-xs px-2.5 py-0.5 rounded-full font-medium',
-                        apt.type === 'Emergency'
-                          ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
-                          : apt.type === 'Telehealth'
-                          ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30'
-                          : 'bg-teal-500/20 text-teal-300 border border-teal-500/30'
-                      )}
-                    >
-                      {apt.type}
-                    </span>
-                    <span
-                      className={cn(
-                        'text-xs px-2.5 py-0.5 rounded-full font-medium',
-                        apt.status === 'Waiting'
-                          ? 'bg-amber-500/20 text-amber-300'
-                          : apt.status === 'In Progress'
-                          ? 'bg-blue-500/20 text-blue-300'
-                          : 'bg-emerald-500/20 text-emerald-300'
-                      )}
-                    >
-                      ● {apt.status}
-                    </span>
+        {filtered.length === 0 ? (
+          <div className="p-12 rounded-2xl bg-white/[0.02] border border-white/5 text-center space-y-3">
+            <Users className="w-10 h-10 text-slate-600 mx-auto" />
+            <h4 className="text-base font-semibold text-slate-200">No Patients in Queue</h4>
+            <p className="text-xs text-slate-400 max-w-sm mx-auto">
+              There are currently no patients in this queue. When appointments are scheduled or patient records are unlocked, they will appear here.
+            </p>
+          </div>
+        ) : (
+          filtered.map(apt => {
+            const patient = patients.find(p => p.id === apt.patientId);
+            return (
+              <div
+                key={apt.id}
+                className="p-5 rounded-2xl bg-white/[0.03] border border-white/10 hover:border-teal-500/30 transition flex flex-col md:flex-row md:items-center justify-between gap-4"
+              >
+                <div className="flex items-start gap-4">
+                  <div className="w-12 h-12 rounded-2xl bg-teal-500/10 border border-teal-500/20 flex flex-col items-center justify-center text-teal-300 font-bold text-xs shrink-0">
+                    <Clock3 className="w-4 h-4 mb-0.5" />
+                    <span>{apt.time.split(' ')[0]}</span>
                   </div>
-
-                  <p className="text-xs text-slate-300 mt-2">
-                    <span className="text-slate-500">Reason:</span> {apt.reason}
-                  </p>
-
-                  {patient && (
-                    <div className="flex flex-wrap items-center gap-4 mt-2 text-xs text-slate-400">
-                      <span>Age: {patient.age}y</span>
-                      <span>Gender: {patient.gender}</span>
-                      <span>Blood Group: {patient.bloodGroup}</span>
-                      {patient.allergies.length > 0 && (
-                        <span className="text-rose-400 font-medium flex items-center gap-1">
-                          <AlertTriangle className="w-3 h-3" /> Allergy:{' '}
-                          {patient.allergies.map(a => a.name).join(', ')}
-                        </span>
-                      )}
+                  <div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h4 className="font-bold text-base text-white">{apt.patientName}</h4>
+                      <span className="text-xs font-mono px-2.5 py-0.5 rounded bg-white/5 text-slate-300 border border-white/5">
+                        {apt.pid}
+                      </span>
+                      <span
+                        className={cn(
+                          'text-xs px-2.5 py-0.5 rounded-full font-medium',
+                          apt.type === 'Emergency'
+                            ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
+                            : apt.type === 'Telehealth'
+                            ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30'
+                            : 'bg-teal-500/20 text-teal-300 border border-teal-500/30'
+                        )}
+                      >
+                        {apt.type}
+                      </span>
+                      <span
+                        className={cn(
+                          'text-xs px-2.5 py-0.5 rounded-full font-medium',
+                          apt.status === 'Waiting'
+                            ? 'bg-amber-500/20 text-amber-300'
+                            : apt.status === 'In Progress'
+                            ? 'bg-blue-500/20 text-blue-300'
+                            : 'bg-emerald-500/20 text-emerald-300'
+                        )}
+                      >
+                        ● {apt.status}
+                      </span>
                     </div>
+
+                    <p className="text-xs text-slate-300 mt-2">
+                      <span className="text-slate-500">Reason:</span> {apt.reason}
+                    </p>
+
+                    {patient && (
+                      <div className="flex flex-wrap items-center gap-4 mt-2 text-xs text-slate-400">
+                        <span>Age: {patient.age}y</span>
+                        <span>Gender: {patient.gender}</span>
+                        <span>Blood Group: {patient.bloodGroup}</span>
+                        {patient.allergies.length > 0 && (
+                          <span className="text-rose-400 font-medium flex items-center gap-1">
+                            <AlertTriangle className="w-3 h-3" /> Allergy:{' '}
+                            {patient.allergies.map(a => a.name).join(', ')}
+                          </span>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 flex-wrap md:justify-end">
+                  {apt.status === 'Waiting' && (
+                    <button
+                      onClick={() => onUpdateStatus(apt.id, 'In Progress')}
+                      className="px-3.5 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-slate-200 text-xs font-medium transition"
+                    >
+                      Check In Patient
+                    </button>
+                  )}
+                  {patient && (
+                    <button
+                      onClick={() => onStartConsult(patient)}
+                      className="px-4 py-2 rounded-xl bg-gradient-to-r from-teal-500 to-cyan-500 text-slate-950 font-bold text-xs shadow-md shadow-teal-500/20 hover:brightness-110 flex items-center gap-1.5 transition"
+                    >
+                      <Stethoscope className="w-4 h-4" /> Start Consultation
+                    </button>
+                  )}
+                  {apt.status !== 'Completed' && (
+                    <button
+                      onClick={() => onUpdateStatus(apt.id, 'Completed')}
+                      className="px-3 py-2 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-300 text-xs font-medium hover:bg-emerald-500/20 transition"
+                    >
+                      Mark Done
+                    </button>
                   )}
                 </div>
               </div>
-
-              <div className="flex items-center gap-2 flex-wrap md:justify-end">
-                {apt.status === 'Waiting' && (
-                  <button
-                    onClick={() => onUpdateStatus(apt.id, 'In Progress')}
-                    className="px-3.5 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-slate-200 text-xs font-medium transition"
-                  >
-                    Check In Patient
-                  </button>
-                )}
-                {patient && (
-                  <button
-                    onClick={() => onStartConsult(patient)}
-                    className="px-4 py-2 rounded-xl bg-gradient-to-r from-teal-500 to-cyan-500 text-slate-950 font-bold text-xs shadow-md shadow-teal-500/20 hover:brightness-110 flex items-center gap-1.5 transition"
-                  >
-                    <Stethoscope className="w-4 h-4" /> Start Consultation
-                  </button>
-                )}
-                {apt.status !== 'Completed' && (
-                  <button
-                    onClick={() => onUpdateStatus(apt.id, 'Completed')}
-                    className="px-3 py-2 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-300 text-xs font-medium hover:bg-emerald-500/20 transition"
-                  >
-                    Mark Done
-                  </button>
-                )}
-              </div>
-            </div>
-          );
-        })}
+            );
+          })
+        )}
       </div>
     </motion.div>
   );
@@ -2066,7 +2160,7 @@ function PatientRecordsSection({
             className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-teal-500 to-cyan-500 text-slate-950 font-bold text-xs flex items-center gap-1.5 shrink-0 hover:brightness-110 transition shadow-sm shadow-teal-500/20"
           >
             <Key className="w-3.5 h-3.5" />
-            <span>Unlock Patient via PIN</span>
+            <span>Unlock Patient via Patient ID</span>
           </button>
         </div>
 
@@ -2098,7 +2192,7 @@ function PatientRecordsSection({
           <div className="space-y-1">
             <h3 className="text-lg font-bold text-white">No Patient Records Unlocked</h3>
             <p className="text-xs text-slate-400 max-w-md mx-auto leading-relaxed">
-              Patients maintain sovereign privacy control over their data. Clinicians cannot search or browse patient profiles publicly. Please request a 6-digit Doctor Access PIN from your patient (e.g. <span className="font-mono text-teal-300">MED-849201</span>) to unlock their medical chart and CT/X-Ray imaging.
+              Patients maintain sovereign privacy control over their health data. Clinicians cannot browse profiles publicly. Enter the patient's permanent <strong>Patient ID</strong> (e.g. <span className="font-mono text-teal-300">PID-9B2F4C1A</span>) to link their chart, vitals, and diagnostic imaging.
             </p>
           </div>
           <button
@@ -2106,7 +2200,7 @@ function PatientRecordsSection({
             className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-teal-500 to-cyan-500 text-slate-950 font-bold text-xs shadow-md shadow-teal-500/20 transition flex items-center gap-2 mx-auto"
           >
             <Key className="w-4 h-4" />
-            <span>Enter Patient Access PIN</span>
+            <span>Enter Patient ID</span>
           </button>
         </div>
       ) : patient ? (
@@ -2411,18 +2505,47 @@ function MessagesSection({
   input,
   setInput,
   onSendMessage,
-  onSendTemplate
+  onSendTemplate,
+  onOpenUnlockModal
 }: any) {
-  const activePatient = patients.find((p: Patient) => p.id === selectedPatientId);
-  const patientMessages = messages[selectedPatientId] || [];
+  if (!patients || patients.length === 0) {
+    return (
+      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="h-[calc(100vh-140px)] flex flex-col items-center justify-center p-8 text-center rounded-2xl bg-white/[0.03] border border-white/10 backdrop-blur-md space-y-4">
+        <div className="w-16 h-16 rounded-2xl bg-teal-500/10 border border-teal-500/20 text-teal-400 flex items-center justify-center">
+          <MessageSquare className="w-8 h-8" />
+        </div>
+        <div className="space-y-1">
+          <h3 className="text-lg font-bold text-white">No Connected Patients Yet</h3>
+          <p className="text-xs text-slate-400 max-w-sm mx-auto leading-relaxed">
+            Direct physician-patient messaging is enabled as soon as you unlock a patient using their permanent Patient ID (PID).
+          </p>
+        </div>
+        <button
+          onClick={onOpenUnlockModal}
+          className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-teal-500 to-cyan-500 text-slate-950 font-bold text-xs shadow-md shadow-teal-500/20 hover:brightness-110 flex items-center gap-2"
+        >
+          <Key className="w-4 h-4" />
+          <span>Unlock Patient via Patient ID</span>
+        </button>
+      </motion.div>
+    );
+  }
+
+  const activePatient = patients.find((p: Patient) => p.id === selectedPatientId) || patients[0];
+  const patientMessages = Array.isArray(messages) ? messages : (messages[activePatient?.id] || []);
 
   return (
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="h-[calc(100vh-140px)] flex rounded-2xl bg-white/[0.03] border border-white/10 backdrop-blur-md overflow-hidden">
       {/* Patient Conversations List */}
       <div className="w-80 border-r border-white/10 flex flex-col bg-white/[0.01]">
-        <div className="p-4 border-b border-white/10">
-          <h3 className="font-bold text-white text-sm">Secure Patient Chats</h3>
-          <p className="text-[11px] text-slate-400">HIPAA/NDPR compliant messaging</p>
+        <div className="p-4 border-b border-white/10 flex items-center justify-between">
+          <div>
+            <h3 className="font-bold text-white text-sm">Secure Patient Chats</h3>
+            <p className="text-[11px] text-slate-400">HIPAA/NDPR direct messaging</p>
+          </div>
+          <span className="text-[10px] font-mono text-teal-400 bg-teal-500/10 px-2 py-0.5 rounded">
+            {patients.length} Active
+          </span>
         </div>
 
         <div className="flex-1 overflow-y-auto p-2 space-y-1">
@@ -2432,7 +2555,7 @@ function MessagesSection({
               onClick={() => setSelectedPatientId(p.id)}
               className={cn(
                 'w-full p-3 rounded-xl text-left transition flex items-center gap-3',
-                selectedPatientId === p.id
+                (selectedPatientId === p.id || (!selectedPatientId && p.id === activePatient?.id))
                   ? 'bg-teal-500/20 border border-teal-500/40 text-white'
                   : 'hover:bg-white/5 text-slate-300'
               )}
@@ -2488,24 +2611,34 @@ function MessagesSection({
 
         {/* Message Bubble List */}
         <div className="flex-1 overflow-y-auto p-4 space-y-3">
-          {patientMessages.map((msg: MessageItem) => (
-            <div
-              key={msg.id}
-              className={cn('flex flex-col', msg.sender === 'doctor' ? 'items-end' : 'items-start')}
-            >
-              <div
-                className={cn(
-                  'max-w-[75%] px-4 py-2.5 rounded-2xl text-xs leading-relaxed',
-                  msg.sender === 'doctor'
-                    ? 'bg-gradient-to-r from-teal-500 to-cyan-600 text-slate-950 font-medium rounded-br-none'
-                    : 'bg-white/10 text-slate-200 rounded-bl-none border border-white/10'
-                )}
-              >
-                {msg.text}
-              </div>
-              <span className="text-[10px] text-slate-500 mt-1 px-1">{msg.timestamp}</span>
+          {patientMessages.length === 0 ? (
+            <div className="h-full flex flex-col items-center justify-center text-center p-6 space-y-2 text-slate-500">
+              <MessageSquare className="w-8 h-8 opacity-40" />
+              <p className="text-xs">No messages yet with {activePatient?.name}. Send a clinical greeting or update below.</p>
             </div>
-          ))}
+          ) : (
+            patientMessages.map((msg: any) => {
+              const isDoctor = msg.senderRole === 'doctor' || msg.sender === 'doctor';
+              return (
+                <div
+                  key={msg.id}
+                  className={cn('flex flex-col', isDoctor ? 'items-end' : 'items-start')}
+                >
+                  <div
+                    className={cn(
+                      'max-w-[75%] px-4 py-2.5 rounded-2xl text-xs leading-relaxed',
+                      isDoctor
+                        ? 'bg-gradient-to-r from-teal-500 to-cyan-600 text-slate-950 font-medium rounded-br-none'
+                        : 'bg-white/10 text-slate-200 rounded-bl-none border border-white/10'
+                    )}
+                  >
+                    {msg.text}
+                  </div>
+                  <span className="text-[10px] text-slate-500 mt-1 px-1">{msg.timestamp}</span>
+                </div>
+              );
+            })
+          )}
         </div>
 
         {/* Input Bar */}
@@ -2549,8 +2682,118 @@ function AiWorkspaceSection({
   rawNote,
   setRawNote,
   extractedNote,
-  onExtractNote
+  onExtractNote,
+  onOpenUnlockModal
 }: any) {
+  if (!patients || patients.length === 0) {
+    return (
+      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6">
+        <div className="p-6 rounded-3xl bg-gradient-to-r from-teal-950/60 via-cyan-950/40 to-[#0a1224] border border-cyan-500/30 backdrop-blur-md">
+          <div className="flex items-center gap-3 text-cyan-300 font-bold text-lg mb-2">
+            <BrainCircuit className="w-6 h-6 text-cyan-400" />
+            <span>AI Clinical Decision Support Engine</span>
+          </div>
+          <p className="text-xs text-slate-300 max-w-2xl leading-relaxed">
+            The MedConnect AI Assistant provides clinical decision support for attending physicians. It performs automated 3-bullet patient chart rundowns, evaluates real-time cardiovascular and sepsis risks from logged vitals, flags dangerous drug-drug contraindications, and formats free-text notes into accredited EMR documentation.
+          </p>
+        </div>
+
+        <div className="p-12 rounded-3xl bg-white/[0.02] border border-white/10 text-center space-y-4">
+          <div className="w-16 h-16 rounded-2xl bg-cyan-500/10 border border-cyan-500/20 text-cyan-400 flex items-center justify-center mx-auto">
+            <Sparkles className="w-8 h-8" />
+          </div>
+          <div className="space-y-1">
+            <h3 className="text-lg font-bold text-white">No Patient Selected for Clinical Analysis</h3>
+            <p className="text-xs text-slate-400 max-w-md mx-auto leading-relaxed">
+              To run patient-specific diagnostic summaries, risk assessments, and medication reviews, link to a patient record using their permanent Patient ID (PID).
+            </p>
+          </div>
+          <button
+            onClick={onOpenUnlockModal}
+            className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-teal-500 to-cyan-500 text-slate-950 font-bold text-xs shadow-md shadow-teal-500/20 transition flex items-center gap-2 mx-auto"
+          >
+            <Key className="w-4 h-4" />
+            <span>Unlock Patient via Patient ID</span>
+          </button>
+        </div>
+
+        {/* Pharmacological and Clinical Note tools remain usable */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <div className="p-5 rounded-2xl bg-white/[0.03] border border-white/10 backdrop-blur-md space-y-4">
+            <h4 className="text-sm font-bold text-white flex items-center gap-2">
+              <Pill className="w-4 h-4 text-amber-400" />
+              <span>Drug-Drug Interaction Checker</span>
+            </h4>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-[11px] text-slate-400 mb-1">Drug #1</label>
+                <input
+                  type="text"
+                  placeholder="e.g. Warfarin"
+                  value={drugA}
+                  onChange={e => setDrugA(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl bg-white/5 border border-white/10 text-white text-xs"
+                />
+              </div>
+              <div>
+                <label className="block text-[11px] text-slate-400 mb-1">Drug #2</label>
+                <input
+                  type="text"
+                  placeholder="e.g. Aspirin"
+                  value={drugB}
+                  onChange={e => setDrugB(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl bg-white/5 border border-white/10 text-white text-xs"
+                />
+              </div>
+            </div>
+            <button
+              onClick={onCheckInteraction}
+              className="w-full py-2 rounded-xl bg-amber-500/20 border border-amber-500/30 text-amber-300 text-xs font-semibold hover:bg-amber-500/30"
+            >
+              Check Cross-Reactivity
+            </button>
+            {interactionResult && (
+              <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-xs text-amber-200 whitespace-pre-line leading-relaxed">
+                {interactionResult}
+              </div>
+            )}
+          </div>
+
+          <div className="p-5 rounded-2xl bg-white/[0.03] border border-white/10 backdrop-blur-md space-y-4">
+            <div className="flex items-center justify-between">
+              <h4 className="text-sm font-bold text-white flex items-center gap-2">
+                <FilePlus className="w-4 h-4 text-teal-400" />
+                <span>AI Free-Text Note Structurer</span>
+              </h4>
+              <button
+                onClick={onExtractNote}
+                disabled={loading}
+                className="px-3 py-1 rounded-lg bg-teal-500 text-slate-950 text-xs font-bold hover:brightness-110 disabled:opacity-50"
+              >
+                {loading ? 'Extracting...' : 'Extract EMR'}
+              </button>
+            </div>
+            <textarea
+              rows={3}
+              placeholder="Paste raw physician dictation or consultation notes here..."
+              value={rawNote}
+              onChange={e => setRawNote(e.target.value)}
+              className="w-full px-3 py-2 rounded-xl bg-white/5 border border-white/10 text-white text-xs"
+            />
+            {extractedNote && (
+              <div className="p-4 rounded-xl bg-white/[0.02] border border-white/5 space-y-2 text-xs">
+                <p><strong className="text-teal-300">Complaint:</strong> {extractedNote.chiefComplaint}</p>
+                <p><strong className="text-teal-300">HPI:</strong> {extractedNote.hpi}</p>
+                <p><strong className="text-teal-300">ICD-10 Suggestions:</strong> {extractedNote.suspectedICD10.join(', ')}</p>
+                <p><strong className="text-teal-300">Recommended Orders:</strong> {extractedNote.suggestedOrders.join(', ')}</p>
+              </div>
+            )}
+          </div>
+        </div>
+      </motion.div>
+    );
+  }
+
   const patient = patients.find((p: Patient) => p.id === selectedPatientId) || patients[0];
 
   return (
@@ -2570,7 +2813,7 @@ function AiWorkspaceSection({
         <div className="flex items-center gap-2">
           <span className="text-xs text-slate-400">Target Patient:</span>
           <select
-            value={selectedPatientId}
+            value={selectedPatientId || patient.id}
             onChange={e => setSelectedPatientId(e.target.value)}
             className="px-3 py-1.5 rounded-xl bg-[#11192d] border border-cyan-500/30 text-cyan-200 text-xs"
           >
@@ -2597,21 +2840,29 @@ function AiWorkspaceSection({
             <div className="flex items-start gap-2">
               <span className="text-teal-400 font-bold">•</span>
               <span>
-                <strong>Profile & Baselines:</strong> {patient.name}, {patient.age}y {patient.gender}, diagnosed with{' '}
-                {patient.chronicConditions.join(', ') || 'no chronic illnesses'}.
+                <strong>Profile & Baselines:</strong> {patient.name}, {patient.age ? `${patient.age}y` : 'Age not recorded'}{' '}
+                {patient.gender || 'Not specified'}, diagnosed with{' '}
+                {patient.chronicConditions && patient.chronicConditions.length > 0
+                  ? patient.chronicConditions.join(', ')
+                  : 'no chronic illnesses recorded'}.
               </span>
             </div>
             <div className="flex items-start gap-2">
               <span className="text-teal-400 font-bold">•</span>
               <span>
-                <strong>Vital Trajectory:</strong> Recent BP trends at {patient.vitalsHistory[0]?.bp || '--/--'} mmHg.
-                Target range stability maintained under current regimen.
+                <strong>Vital Trajectory:</strong> Recent BP:{' '}
+                {patient.vitalsHistory && patient.vitalsHistory[0]?.bp
+                  ? `${patient.vitalsHistory[0].bp} mmHg`
+                  : 'No resting vitals recorded by patient yet'}.
               </span>
             </div>
             <div className="flex items-start gap-2">
               <span className="text-teal-400 font-bold">•</span>
               <span>
-                <strong>Key Precautions:</strong> Flagged allergies: {patient.allergies.map((a: any) => a.name).join(', ') || 'NKDA'}. Next quarterly review due in 14 days.
+                <strong>Key Precautions:</strong> Flagged allergies:{' '}
+                {patient.allergies && patient.allergies.length > 0
+                  ? patient.allergies.map((a: any) => a.name).join(', ')
+                  : 'NKDA (No known drug allergies recorded)'}.
               </span>
             </div>
           </div>
@@ -2679,6 +2930,7 @@ function AiWorkspaceSection({
               <label className="block text-[11px] text-slate-400 mb-1">Drug #1</label>
               <input
                 type="text"
+                placeholder="e.g. Warfarin"
                 value={drugA}
                 onChange={e => setDrugA(e.target.value)}
                 className="w-full px-3 py-2 rounded-xl bg-white/5 border border-white/10 text-white text-xs"
@@ -2688,6 +2940,7 @@ function AiWorkspaceSection({
               <label className="block text-[11px] text-slate-400 mb-1">Drug #2</label>
               <input
                 type="text"
+                placeholder="e.g. Aspirin"
                 value={drugB}
                 onChange={e => setDrugB(e.target.value)}
                 className="w-full px-3 py-2 rounded-xl bg-white/5 border border-white/10 text-white text-xs"

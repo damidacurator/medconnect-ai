@@ -68,6 +68,12 @@ import {
   registerOrUpdatePatientAccess,
   type AuthorizedDoctor,
 } from '@/lib/accessControl';
+import {
+  fetchMessages,
+  sendChatMessage,
+  markMessagesAsRead,
+  type ChatMessage,
+} from '@/lib/messaging';
 
 // ============================================================================
 // TYPES & DATA STRUCTURES
@@ -861,9 +867,11 @@ export function PatientDashboard() {
 
               {activeSection === 'messages' && (
                 <MessagesSection
-                  doctorsList={doctorsList}
+                  userId={user?.id || ''}
+                  patientPid={patientIdCode}
                   patientName={patientDisplayName}
                   onShowToast={showToast}
+                  onNavigate={sec => setActiveSection(sec as SectionId)}
                 />
               )}
 
@@ -2494,46 +2502,181 @@ function AppointmentsSection({
 // ============================================================================
 
 interface MessagesSectionProps {
-  doctorsList: any[];
+  userId: string;
+  patientPid: string;
   patientName: string;
-  onShowToast: (t: string, d?: string) => void;
+  onShowToast: (t: string, d?: string, type?: 'success' | 'info' | 'error') => void;
+  onNavigate?: (sec: SectionId) => void;
 }
 
-function MessagesSection({ doctorsList, patientName, onShowToast }: MessagesSectionProps) {
-  const [conversations, setConversations] = useState<Conversation[]>([]);
-  const [activeDoctorId, setActiveDoctorId] = useState<string>('');
+function MessagesSection({ userId, patientPid, patientName, onShowToast, onNavigate }: MessagesSectionProps) {
+  const [authorizedDoctors, setAuthorizedDoctors] = useState<AuthorizedDoctor[]>([]);
+  const [selectedDoctorId, setSelectedDoctorId] = useState<string>('');
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inputText, setInputText] = useState('');
+  const [isSending, setIsSending] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
 
-  const activeConv = conversations.find(c => c.doctorId === activeDoctorId) || conversations[0];
+  // 1. Sync connected doctors from Supabase cloud + messages table
+  useEffect(() => {
+    let active = true;
 
-  const handleSendMessage = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!inputText.trim() || !activeConv) return;
+    async function syncDoctors() {
+      if (!userId) {
+        if (active) setIsLoading(false);
+        return;
+      }
+      try {
+        const cloudDocs = await fetchAuthorizedDoctorsCloud(userId);
 
-    const newMsg: MessageItem = {
-      id: `m-${Date.now()}`,
-      senderId: 'patient',
-      senderName: patientName,
-      senderRole: 'patient',
-      text: inputText.trim(),
-      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-    };
+        // Also check if any doctors sent messages directly
+        const { data: msgRows } = await supabase
+          .from('messages')
+          .select('sender_id, receiver_id')
+          .or(`sender_id.eq.${userId},receiver_id.eq.${userId}`);
 
-    setConversations(prev =>
-      prev.map(c => {
-        if (c.doctorId === activeConv.doctorId) {
-          return {
-            ...c,
-            lastMessage: newMsg.text,
-            lastTime: newMsg.timestamp,
-            messages: [...c.messages, newMsg],
-          };
+        const foundIds = new Set<string>(cloudDocs.map(d => d.doctorId));
+        const extraDocs: AuthorizedDoctor[] = [];
+
+        if (Array.isArray(msgRows)) {
+          for (const m of msgRows) {
+            const otherId = m.sender_id === userId ? m.receiver_id : m.sender_id;
+            if (otherId && !foundIds.has(otherId)) {
+              foundIds.add(otherId);
+              const { data: docProf } = await supabase
+                .from('profiles')
+                .select('*')
+                .eq('id', otherId)
+                .maybeSingle();
+
+              if (docProf && docProf.role === 'doctor') {
+                extraDocs.push({
+                  doctorId: docProf.id,
+                  doctorName: docProf.full_name || 'Dr. Physician',
+                  hospital: ((docProf.metadata as any)?.current_institution as string) || 'Clinical Center',
+                  specialization: ((docProf.metadata as any)?.specialization as string) || 'Attending Physician',
+                  authorizedAt: 'Active thread',
+                  permissions: { vitals: true, records: true, imaging: true },
+                });
+              }
+            }
+          }
         }
-        return c;
-      })
-    );
-    setInputText('');
+
+        const combined = [...cloudDocs, ...extraDocs];
+        if (active) {
+          setAuthorizedDoctors(combined);
+          if (combined.length > 0 && !selectedDoctorId) {
+            setSelectedDoctorId(combined[0].doctorId);
+          }
+          setIsLoading(false);
+        }
+      } catch (err) {
+        console.warn('Error loading connected doctors in messaging:', err);
+        if (active) setIsLoading(false);
+      }
+    }
+
+    syncDoctors();
+    const interval = setInterval(syncDoctors, 5000);
+    return () => {
+      active = false;
+      clearInterval(interval);
+    };
+  }, [userId, selectedDoctorId]);
+
+  // 2. Poll messages with the selected doctor
+  useEffect(() => {
+    if (!userId || !selectedDoctorId) {
+      setMessages([]);
+      return;
+    }
+    let isMounted = true;
+
+    async function loadThread() {
+      try {
+        const msgs = await fetchMessages(userId, selectedDoctorId, userId, 'patient');
+        if (isMounted) setMessages(msgs);
+        await markMessagesAsRead(selectedDoctorId, userId);
+      } catch (err) {
+        console.warn('Error fetching patient messages:', err);
+      }
+    }
+
+    loadThread();
+    const threadInterval = setInterval(loadThread, 3000);
+    return () => {
+      isMounted = false;
+      clearInterval(threadInterval);
+    };
+  }, [userId, selectedDoctorId]);
+
+  // 3. Send message handler
+  const handleSendMessage = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const trimmed = inputText.trim();
+    if (!trimmed || !selectedDoctorId || isSending) return;
+
+    setIsSending(true);
+    try {
+      const sent = await sendChatMessage(userId, selectedDoctorId, trimmed, 'patient');
+      setMessages(prev => [...prev, sent]);
+      setInputText('');
+    } catch (err) {
+      console.error('Failed to send patient message:', err);
+      onShowToast('Send Error', 'Could not deliver message to doctor. Please retry.', 'error');
+    } finally {
+      setIsSending(false);
+    }
   };
+
+  const handleCopyPid = () => {
+    try {
+      navigator.clipboard.writeText(patientPid);
+      onShowToast('Patient ID Copied', `${patientPid} copied to clipboard. Share with your doctor.`, 'success');
+    } catch {
+      onShowToast('Patient ID', patientPid, 'info');
+    }
+  };
+
+  const activeDoc = authorizedDoctors.find(d => d.doctorId === selectedDoctorId) || authorizedDoctors[0];
+
+  if (!isLoading && authorizedDoctors.length === 0) {
+    return (
+      <div className="h-[calc(100vh-12rem)] min-h-[500px] rounded-3xl bg-slate-900/60 border border-slate-800/80 backdrop-blur-xl flex flex-col items-center justify-center p-8 text-center space-y-6">
+        <div className="w-16 h-16 rounded-2xl bg-teal-500/10 border border-teal-500/20 text-teal-400 flex items-center justify-center">
+          <MessageSquare className="w-8 h-8" />
+        </div>
+        <div className="space-y-2 max-w-md">
+          <h3 className="text-xl font-bold text-white">No Connected Physicians Yet</h3>
+          <p className="text-xs text-slate-300 leading-relaxed">
+            Direct clinician messaging unlocks as soon as your attending physician enters your sovereign <strong>Patient ID</strong> into their clinical workstation.
+          </p>
+        </div>
+        <div className="p-4 rounded-2xl bg-black/60 border border-cyan-500/30 flex items-center gap-4">
+          <div className="text-left">
+            <span className="text-[10px] uppercase font-mono tracking-wider text-slate-400">Your Permanent Patient ID</span>
+            <div className="text-2xl font-mono font-bold text-teal-300 select-all">{patientPid}</div>
+          </div>
+          <button
+            onClick={handleCopyPid}
+            className="px-4 py-2 rounded-xl bg-teal-500/20 hover:bg-teal-500/30 text-teal-300 border border-teal-500/40 text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer"
+          >
+            <Copy className="w-3.5 h-3.5" />
+            <span>Copy ID</span>
+          </button>
+        </div>
+        {onNavigate && (
+          <button
+            onClick={() => onNavigate('access')}
+            className="text-xs text-slate-400 hover:text-teal-300 underline underline-offset-4 transition"
+          >
+            View or verify clinical access permissions in Access Control
+          </button>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className="h-[calc(100vh-12rem)] min-h-[500px] rounded-3xl bg-slate-900/60 border border-slate-800/80 backdrop-blur-xl flex flex-col md:flex-row overflow-hidden">
@@ -2541,66 +2684,68 @@ function MessagesSection({ doctorsList, patientName, onShowToast }: MessagesSect
       <div className="w-full md:w-80 border-r border-slate-800 flex flex-col">
         <div className="p-4 border-b border-slate-800 flex items-center justify-between">
           <h3 className="font-bold text-white text-sm">Direct Messages</h3>
-          <span className="text-[11px] text-slate-500 font-semibold">{conversations.length} Active</span>
+          <span className="text-[11px] text-teal-400 font-semibold">{authorizedDoctors.length} Connected</span>
         </div>
 
         <div className="flex-1 overflow-y-auto divide-y divide-slate-800/60">
-          {conversations.length > 0 ? (
-            conversations.map(conv => (
+          {authorizedDoctors.map(doc => {
+            const isSelected = doc.doctorId === selectedDoctorId;
+            const initials = doc.doctorName
+              .split(' ')
+              .filter(Boolean)
+              .map(w => w[0])
+              .slice(0, 2)
+              .join('')
+              .toUpperCase() || 'DR';
+
+            return (
               <div
-                key={conv.doctorId}
-                onClick={() => setActiveDoctorId(conv.doctorId)}
+                key={doc.doctorId}
+                onClick={() => setSelectedDoctorId(doc.doctorId)}
                 className={cn(
                   'p-4 flex items-start gap-3 cursor-pointer transition',
-                  conv.doctorId === activeDoctorId
+                  isSelected
                     ? 'bg-teal-500/10 border-l-4 border-teal-400'
                     : 'hover:bg-slate-800/40'
                 )}
               >
                 <div className="relative flex-shrink-0">
                   <div className="w-10 h-10 rounded-full bg-gradient-to-tr from-teal-500 to-cyan-500 flex items-center justify-center font-bold text-slate-950 text-xs">
-                    {conv.avatar}
+                    {initials}
                   </div>
-                  {conv.online && (
-                    <span className="absolute bottom-0 right-0 w-3 h-3 rounded-full bg-emerald-400 border-2 border-slate-900" />
-                  )}
+                  <span className="absolute bottom-0 right-0 w-3 h-3 rounded-full bg-emerald-400 border-2 border-slate-900" />
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center justify-between">
-                    <h4 className="text-xs font-bold text-white truncate">{conv.doctorName}</h4>
-                    <span className="text-[10px] text-slate-500 font-mono">{conv.lastTime}</span>
+                    <h4 className="text-xs font-bold text-white truncate">{doc.doctorName}</h4>
                   </div>
-                  <p className="text-[11px] text-teal-400 font-medium">{conv.specialty}</p>
-                  <p className="text-[11px] text-slate-400 truncate mt-0.5">{conv.lastMessage}</p>
+                  <p className="text-[11px] text-teal-400 font-medium truncate">{doc.specialization}</p>
+                  <p className="text-[10px] text-slate-400 truncate mt-0.5">{doc.hospital}</p>
                 </div>
               </div>
-            ))
-          ) : (
-            <div className="p-8 text-center space-y-2">
-              <MessageSquare className="w-8 h-8 text-slate-600 mx-auto" />
-              <p className="text-xs text-slate-400">No active doctor threads</p>
-            </div>
-          )}
+            );
+          })}
         </div>
       </div>
 
       {/* Chat Thread & Input */}
       <div className="flex-1 flex flex-col bg-slate-950/40">
-        {activeConv ? (
+        {activeDoc ? (
           <>
             {/* Chat Header */}
             <div className="p-4 border-b border-slate-800 flex items-center justify-between">
               <div className="flex items-center gap-3">
                 <div className="w-9 h-9 rounded-full bg-teal-500/20 text-teal-300 font-bold flex items-center justify-center text-xs">
-                  {activeConv.avatar}
+                  {activeDoc.doctorName.slice(0, 2).toUpperCase()}
                 </div>
                 <div>
-                  <h4 className="text-xs font-bold text-white">{activeConv.doctorName}</h4>
-                  <p className="text-[11px] text-teal-400">{activeConv.specialty}</p>
+                  <h4 className="text-xs font-bold text-white">{activeDoc.doctorName}</h4>
+                  <p className="text-[11px] text-teal-400">{activeDoc.specialization} • {activeDoc.hospital}</p>
                 </div>
               </div>
               <button
-                onClick={() => onShowToast('Telehealth', 'Starting direct audio call with doctor...')}
+                type="button"
+                onClick={() => onShowToast('Telehealth', `Connecting secure audio line with ${activeDoc.doctorName}...`)}
                 className="px-3 py-1.5 rounded-xl bg-teal-500/10 hover:bg-teal-500/20 text-teal-300 border border-teal-500/30 text-xs font-semibold transition"
               >
                 Audio Call
@@ -2609,43 +2754,55 @@ function MessagesSection({ doctorsList, patientName, onShowToast }: MessagesSect
 
             {/* Messages Body */}
             <div className="flex-1 overflow-y-auto p-4 space-y-3">
-              {activeConv.messages.map(msg => {
-                const isPatient = msg.senderRole === 'patient';
-                return (
-                  <div
-                    key={msg.id}
-                    className={cn('flex flex-col', isPatient ? 'items-end' : 'items-start')}
-                  >
+              {messages.length === 0 ? (
+                <div className="py-12 text-center space-y-2">
+                  <MessageSquare className="w-8 h-8 text-slate-600 mx-auto" />
+                  <p className="text-xs text-slate-300 font-medium">No messages yet with {activeDoc.doctorName}</p>
+                  <p className="text-[11px] text-slate-500 max-w-xs mx-auto">
+                    Type a message below to report symptoms, medication updates, or ask a question.
+                  </p>
+                </div>
+              ) : (
+                messages.map(msg => {
+                  const isPatient = msg.senderRole === 'patient';
+                  return (
                     <div
-                      className={cn(
-                        'max-w-md p-3.5 rounded-2xl text-xs leading-relaxed',
-                        isPatient
-                          ? 'bg-gradient-to-r from-teal-500 to-cyan-500 text-slate-950 font-medium rounded-br-sm'
-                          : 'bg-slate-800/80 text-slate-100 border border-slate-700/60 rounded-bl-sm'
-                      )}
+                      key={msg.id}
+                      className={cn('flex flex-col', isPatient ? 'items-end' : 'items-start')}
                     >
-                      {msg.text}
+                      <span className="text-[10px] text-slate-500 font-mono mb-1 px-1">
+                        {isPatient ? 'You' : activeDoc.doctorName} • {msg.timestamp}
+                      </span>
+                      <div
+                        className={cn(
+                          'max-w-md p-3.5 rounded-2xl text-xs leading-relaxed',
+                          isPatient
+                            ? 'bg-gradient-to-r from-teal-500 to-cyan-500 text-slate-950 font-medium rounded-br-sm'
+                            : 'bg-slate-800/90 text-slate-100 border border-slate-700/60 rounded-bl-sm shadow'
+                        )}
+                      >
+                        {msg.text}
+                      </div>
                     </div>
-                    <span className="text-[10px] text-slate-500 font-mono mt-1 px-1">
-                      {msg.timestamp}
-                    </span>
-                  </div>
-                );
-              })}
+                  );
+                })
+              )}
             </div>
 
             {/* Input Bar */}
             <form onSubmit={handleSendMessage} className="p-3 border-t border-slate-800 flex items-center gap-2">
               <input
                 type="text"
-                placeholder="Type your confidential medical message..."
+                placeholder={`Message ${activeDoc.doctorName}...`}
                 value={inputText}
                 onChange={e => setInputText(e.target.value)}
+                disabled={isSending}
                 className="flex-1 px-4 py-2.5 rounded-xl bg-slate-900 border border-slate-700 text-sm text-slate-100 focus:border-teal-400 outline-none"
               />
               <button
                 type="submit"
-                className="p-2.5 rounded-xl bg-teal-500 hover:bg-teal-400 text-slate-950 font-bold transition shadow"
+                disabled={isSending || !inputText.trim()}
+                className="p-2.5 rounded-xl bg-teal-500 hover:bg-teal-400 text-slate-950 font-bold transition shadow disabled:opacity-50 cursor-pointer"
               >
                 <Send className="w-4 h-4" />
               </button>
@@ -2658,7 +2815,7 @@ function MessagesSection({ doctorsList, patientName, onShowToast }: MessagesSect
             </div>
             <h4 className="text-base font-semibold text-white">No Conversation Selected</h4>
             <p className="text-xs text-slate-400 max-w-sm">
-              Schedule a consultation with a specialist or message an attending doctor once your consultation begins.
+              Select an attending doctor from the sidebar to view clinical communications.
             </p>
           </div>
         )}
@@ -3525,7 +3682,6 @@ function AccessControlSection({
 }) {
   const [authorizedDoctors, setAuthorizedDoctors] = useState<AuthorizedDoctor[]>(() => getAuthorizedDoctors(userId));
   const [copied, setCopied] = useState(false);
-  const [isAddingTestDoctor, setIsAddingTestDoctor] = useState(false);
 
   // Sync authorized doctors from Supabase cloud
   useEffect(() => {
@@ -3571,24 +3727,6 @@ function AccessControlSection({
     onShowToast('Access Revoked', `Doctor tenure ended for ${doctorName}. Access instantly terminated.`, 'info');
   };
 
-  const handleAddTestDoctor = async () => {
-    setIsAddingTestDoctor(true);
-    const testDoc = {
-      doctorId: `doc-active-${Date.now()}`,
-      doctorName: 'Dr. Sarah Adebayo, FWACP',
-      hospital: 'Federal Medical Center / Vitalia Clinical Network',
-      specialization: 'Chief Consultant Cardiologist',
-    };
-    const updated = await addAuthorizedDoctor(userId, testDoc);
-    setAuthorizedDoctors(updated);
-    setIsAddingTestDoctor(false);
-    onShowToast(
-      'Doctor Linked to Your Record',
-      'Dr. Sarah Adebayo has been granted clinical access. You can test the "Revoke Access" button below to verify tenure termination.',
-      'success'
-    );
-  };
-
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -3612,18 +3750,6 @@ function AccessControlSection({
             <p className="text-xs text-slate-400 max-w-xl">
               Provide this Patient ID directly to your doctor or hospital clinic. Once entered into their clinical workstation, they will be granted access to your vitals stream, medical history, and CT/X-Ray scans until you revoke it.
             </p>
-          </div>
-
-          <div className="flex items-center gap-2 self-start sm:self-auto">
-            <button
-              onClick={handleAddTestDoctor}
-              disabled={isAddingTestDoctor}
-              className="px-3.5 py-2 rounded-xl bg-teal-500/10 hover:bg-teal-500/20 text-teal-300 border border-teal-500/30 text-xs font-semibold transition flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
-              title="Add a test doctor to verify the Revoke Access kill switch"
-            >
-              <Stethoscope className="w-3.5 h-3.5" />
-              <span>Link Test Doctor</span>
-            </button>
           </div>
         </div>
 
@@ -3738,14 +3864,6 @@ function AccessControlSection({
                 Your medical records, vitals, and diagnostic scans are completely private. Give your <strong>Patient ID ({patientPid})</strong> to an attending physician when you want them to review your chart.
               </p>
             </div>
-            <button
-              onClick={handleAddTestDoctor}
-              disabled={isAddingTestDoctor}
-              className="px-4 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 text-xs font-semibold transition inline-flex items-center gap-2 cursor-pointer"
-            >
-              <Stethoscope className="w-4 h-4 text-teal-400" />
-              <span>Link a Test Doctor to Test Revoke Switch</span>
-            </button>
           </div>
         )}
       </div>

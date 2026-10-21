@@ -2,11 +2,11 @@
  * MedConnect AI - Cryptographic Consent & Access Control Protocol
  *
  * Sovereign Patient ID Access Protocol:
- * 1. Patients cannot be browsed or searched publicly like Facebook.
- * 2. Every patient has a permanent Patient ID (e.g. PID-9B2F4C1A) at the top of their overview.
+ * 1. Patients cannot be browsed or searched publicly.
+ * 2. Every patient has a permanent Patient ID (e.g. PID-9B2F4C1A) displayed prominently on their overview.
  * 3. A physician inputs the Patient ID to unlock the patient's records, vitals, and diagnostic scans.
  * 4. The patient maintains sovereign control and can revoke any doctor's access anytime.
- * 5. Backed by Supabase `public.patient_access_codes` table + local cache.
+ * 5. Backed by Supabase `public.profiles`, `public.patient_access_codes`, and `public.access_grants` with local fallback.
  */
 
 import { supabase } from '@/lib/supabase';
@@ -53,7 +53,7 @@ export function generateRandomPin(): string {
  * Retrieve or initialize patient's private Doctor Access PIN / PID
  */
 export function getPatientAccessPin(patientId: string): string {
-  if (!patientId) return 'MED-000000';
+  if (!patientId) return 'PID-000000';
   const key = `${PATIENT_PIN_KEY_PREFIX}${patientId}`;
   let pin = localStorage.getItem(key);
   if (!pin) {
@@ -128,9 +128,9 @@ export function registerOrUpdatePatientAccess(data: {
     patientName: data.patientName || 'Patient User',
     patientPid: pid,
     email: data.email || '',
-    gender: data.gender || 'Not specified',
-    age: data.age || 'N/A',
-    bloodGroup: data.bloodGroup || 'O+',
+    gender: data.gender,
+    age: data.age,
+    bloodGroup: data.bloodGroup,
     phone: data.phone || '',
     authorizedDoctors: [],
     updatedAt: new Date().toISOString(),
@@ -141,9 +141,9 @@ export function registerOrUpdatePatientAccess(data: {
     patientName: data.patientName || existing.patientName,
     patientPid: pid,
     email: data.email || existing.email,
-    gender: data.gender || existing.gender,
-    age: data.age || existing.age,
-    bloodGroup: data.bloodGroup || existing.bloodGroup,
+    gender: data.gender !== undefined ? data.gender : existing.gender,
+    age: data.age !== undefined ? data.age : existing.age,
+    bloodGroup: data.bloodGroup !== undefined ? data.bloodGroup : existing.bloodGroup,
     phone: data.phone || existing.phone,
     accessCode: codeKey,
     updatedAt: new Date().toISOString(),
@@ -154,7 +154,7 @@ export function registerOrUpdatePatientAccess(data: {
   registry[data.patientId] = updated;
   saveRegistry(registry);
 
-  // Sync asynchronously to Supabase patient_access_codes table
+  // Sync asynchronously to Supabase patient_access_codes and profiles
   try {
     supabase
       .from('patient_access_codes')
@@ -168,6 +168,13 @@ export function registerOrUpdatePatientAccess(data: {
         () => {},
         err => console.warn('Supabase access code sync note:', err)
       );
+
+    // Also update unique_code in profiles if not set
+    supabase
+      .from('profiles')
+      .update({ unique_code: pid })
+      .eq('id', data.patientId)
+      .then(() => {}, () => {});
   } catch {
     // ignore
   }
@@ -176,7 +183,7 @@ export function registerOrUpdatePatientAccess(data: {
 }
 
 /**
- * Get active authorized doctors for a specific patient
+ * Get active authorized doctors for a specific patient from local registry
  */
 export function getAuthorizedDoctors(patientId: string): AuthorizedDoctor[] {
   const registry = getRegistry();
@@ -186,30 +193,83 @@ export function getAuthorizedDoctors(patientId: string): AuthorizedDoctor[] {
 }
 
 /**
- * Fetch authorized doctors from Supabase asynchronously
+ * Fetch authorized doctors from Supabase cloud (patient_access_codes + access_grants)
  */
 export async function fetchAuthorizedDoctorsCloud(patientId: string): Promise<AuthorizedDoctor[]> {
+  const doctorsMap = new Map<string, AuthorizedDoctor>();
+
+  // 1. Check local cache
+  const localDocs = getAuthorizedDoctors(patientId);
+  for (const d of localDocs) {
+    doctorsMap.set(d.doctorId, d);
+  }
+
+  // 2. Query patient_access_codes table
   try {
     const { data } = await supabase
       .from('patient_access_codes')
       .select('authorized_doctors')
       .eq('patient_id', patientId)
-      .single();
+      .maybeSingle();
 
     if (data?.authorized_doctors && Array.isArray(data.authorized_doctors)) {
-      // Sync local cache
-      const registry = getRegistry();
-      const pid = `PID-${patientId.replace(/-/g, '').slice(0, 9).toUpperCase()}`;
-      if (registry[pid]) {
-        registry[pid].authorizedDoctors = data.authorized_doctors;
-        saveRegistry(registry);
+      for (const d of data.authorized_doctors) {
+        doctorsMap.set(d.doctorId, d);
       }
-      return data.authorized_doctors as AuthorizedDoctor[];
+    }
+  } catch (err) {
+    console.warn('patient_access_codes lookup note:', err);
+  }
+
+  // 3. Query access_grants table
+  try {
+    const { data: grants } = await supabase
+      .from('access_grants')
+      .select('granted_to_id, created_at')
+      .eq('patient_id', patientId)
+      .is('revoked_at', null);
+
+    if (Array.isArray(grants) && grants.length > 0) {
+      for (const g of grants) {
+        if (!doctorsMap.has(g.granted_to_id)) {
+          const { data: docProf } = await supabase
+            .from('profiles')
+            .select('*')
+            .eq('id', g.granted_to_id)
+            .maybeSingle();
+
+          if (docProf) {
+            doctorsMap.set(g.granted_to_id, {
+              doctorId: docProf.id,
+              doctorName: docProf.full_name || 'Physician',
+              hospital: ((docProf.metadata as any)?.current_institution as string) || 'MedConnect Healthcare',
+              specialization: ((docProf.metadata as any)?.specialization as string) || 'General Medicine',
+              authorizedAt: new Date(g.created_at).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }),
+              permissions: { vitals: true, records: true, imaging: true },
+            });
+          }
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('access_grants lookup note:', err);
+  }
+
+  const result = Array.from(doctorsMap.values());
+
+  // Sync local cache
+  try {
+    const registry = getRegistry();
+    const pid = `PID-${patientId.replace(/-/g, '').slice(0, 9).toUpperCase()}`;
+    if (registry[pid]) {
+      registry[pid].authorizedDoctors = result;
+      saveRegistry(registry);
     }
   } catch {
-    // fallback to local
+    // ignore
   }
-  return getAuthorizedDoctors(patientId);
+
+  return result;
 }
 
 /**
@@ -263,6 +323,13 @@ export async function addAuthorizedDoctor(
       authorized_doctors: record.authorizedDoctors,
       updated_at: new Date().toISOString(),
     });
+    await supabase.from('access_grants').upsert({
+      patient_id: patientId,
+      granted_to_id: doctorInfo.doctorId,
+      granted_to_role: 'doctor',
+      access_level: 'full',
+      created_at: new Date().toISOString(),
+    });
   } catch (err) {
     console.warn('Could not sync authorized doctor to Supabase:', err);
   }
@@ -271,7 +338,7 @@ export async function addAuthorizedDoctor(
 }
 
 /**
- * Patient revokes access for a specific doctor (NON-DUD - fully active in Supabase & Local)
+ * Patient revokes access for a specific doctor
  */
 export async function revokeDoctorAccess(patientId: string, doctorId: string): Promise<boolean> {
   const registry = getRegistry();
@@ -286,7 +353,7 @@ export async function revokeDoctorAccess(patientId: string, doctorId: string): P
     saveRegistry(registry);
   }
 
-  // Remove from Supabase patient_access_codes table
+  // Remove from Supabase patient_access_codes and access_grants
   try {
     if (record) {
       await supabase
@@ -297,11 +364,16 @@ export async function revokeDoctorAccess(patientId: string, doctorId: string): P
         })
         .eq('patient_id', patientId);
     }
+    await supabase
+      .from('access_grants')
+      .update({ revoked_at: new Date().toISOString() })
+      .eq('patient_id', patientId)
+      .eq('granted_to_id', doctorId);
   } catch (err) {
     console.warn('Could not revoke doctor in Supabase cloud:', err);
   }
 
-  // Also remove this patient from doctor's unlocked local cache
+  // Remove this patient from doctor's unlocked local cache
   try {
     const docKey = `medconnect_doctor_unlocked_${doctorId}`;
     const raw = localStorage.getItem(docKey);
@@ -311,16 +383,17 @@ export async function revokeDoctorAccess(patientId: string, doctorId: string): P
       localStorage.setItem(docKey, JSON.stringify(filtered));
     }
   } catch {
-    // Ignore error
+    // ignore
   }
 
   return true;
 }
 
 /**
- * Doctor unlocks patient records by providing the Patient ID (e.g. PID-9B2F4C1A) or Access PIN
+ * Doctor unlocks patient records by providing their Patient ID (e.g. PID-9B2F4C1A) or Access Code.
+ * Checks local storage and queries Supabase profiles / patient_access_codes in real time.
  */
-export function unlockPatientWithPin(
+export async function unlockPatientWithPin(
   idInput: string,
   doctorInfo: {
     doctorId: string;
@@ -328,24 +401,121 @@ export function unlockPatientWithPin(
     hospital: string;
     specialization: string;
   }
-): { success: boolean; patient?: PatientAccessRecord; error?: string } {
+): Promise<{ success: boolean; patient?: PatientAccessRecord; error?: string }> {
   const cleanedId = idInput.trim().toUpperCase();
-  const registry = getRegistry();
+  if (!cleanedId) {
+    return {
+      success: false,
+      error: 'Please enter a Patient ID (e.g. PID-9B2F4C1A).',
+    };
+  }
 
-  // Find record by Patient ID, Access Code, or UUID
+  const registry = getRegistry();
+  const cleanRaw = cleanedId.replace(/^PID-/, '').replace(/-/g, '');
+
+  // 1. Check local registry first
   let record: PatientAccessRecord | undefined =
     registry[cleanedId] ||
     Object.values(registry).find(
       r =>
-        r.patientPid.toUpperCase() === cleanedId ||
-        r.patientId.toUpperCase() === cleanedId ||
-        r.accessCode.toUpperCase() === cleanedId
+        r.patientPid?.toUpperCase() === cleanedId ||
+        r.patientId?.toUpperCase() === cleanedId ||
+        r.accessCode?.toUpperCase() === cleanedId ||
+        r.patientPid?.replace(/^PID-/, '').replace(/-/g, '').toUpperCase() === cleanRaw
     );
+
+  // 2. If not found in local registry, query Supabase Cloud (profiles table)
+  if (!record) {
+    try {
+      const { data: profiles, error: pError } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('role', 'patient');
+
+      if (!pError && Array.isArray(profiles)) {
+        const match = profiles.find((p: any) => {
+          const pId = (p.id || '').toUpperCase();
+          const pIdRaw = pId.replace(/-/g, '');
+          const pPid = `PID-${pIdRaw.slice(0, 9)}`;
+          const pCode = (p.unique_code || '').toUpperCase();
+          const pMetaPid = ((p.metadata as any)?.patient_id || '').toUpperCase();
+          const pMetaCode = ((p.metadata as any)?.access_code || '').toUpperCase();
+          const pEmail = (p.email || '').toUpperCase();
+
+          return (
+            pPid === cleanedId ||
+            pCode === cleanedId ||
+            pMetaPid === cleanedId ||
+            pMetaCode === cleanedId ||
+            pId === cleanedId ||
+            pIdRaw.startsWith(cleanRaw) ||
+            (cleanRaw.length >= 6 && pIdRaw.includes(cleanRaw)) ||
+            pEmail === cleanedId
+          );
+        });
+
+        if (match) {
+          const patPid = `PID-${match.id.replace(/-/g, '').slice(0, 9).toUpperCase()}`;
+          record = {
+            accessCode: patPid,
+            patientId: match.id,
+            patientName: match.full_name || 'Patient',
+            patientPid: patPid,
+            email: match.email || '',
+            gender: (match.metadata as any)?.gender || match.gender,
+            age: (match.metadata as any)?.age || match.age,
+            bloodGroup: (match.metadata as any)?.blood_group,
+            phone: match.phone || '',
+            authorizedDoctors: [],
+            updatedAt: new Date().toISOString(),
+          };
+        }
+      }
+
+      // If still not in profiles, check patient_access_codes table
+      if (!record) {
+        const { data: pacList } = await supabase.from('patient_access_codes').select('*');
+        if (Array.isArray(pacList)) {
+          const pacMatch = pacList.find((pac: any) => {
+            const code = (pac.access_code || '').toUpperCase();
+            const pid = (pac.patient_id || '').toUpperCase();
+            const raw = code.replace(/^PID-/, '').replace(/-/g, '');
+            return code === cleanedId || pid === cleanedId || raw === cleanRaw;
+          });
+
+          if (pacMatch) {
+            const { data: pData } = await supabase
+              .from('profiles')
+              .select('*')
+              .eq('id', pacMatch.patient_id)
+              .maybeSingle();
+
+            const patPid = pacMatch.access_code || `PID-${pacMatch.patient_id.replace(/-/g, '').slice(0, 9).toUpperCase()}`;
+            record = {
+              accessCode: patPid,
+              patientId: pacMatch.patient_id,
+              patientName: pData?.full_name || 'Patient',
+              patientPid: patPid,
+              email: pData?.email || '',
+              gender: (pData?.metadata as any)?.gender || pData?.gender,
+              age: (pData?.metadata as any)?.age || pData?.age,
+              bloodGroup: (pData?.metadata as any)?.blood_group,
+              phone: pData?.phone || '',
+              authorizedDoctors: Array.isArray(pacMatch.authorized_doctors) ? pacMatch.authorized_doctors : [],
+              updatedAt: new Date().toISOString(),
+            };
+          }
+        }
+      }
+    } catch (cloudErr) {
+      console.warn('Supabase lookup error during patient unlock:', cloudErr);
+    }
+  }
 
   if (!record) {
     return {
       success: false,
-      error: `Patient ID "${cleanedId}" not found. Please ask the patient for their exact Patient ID (found at the top of their Overview page).`,
+      error: `Patient ID "${cleanedId}" not found. Please ensure the patient has created an account and check their exact Patient ID (found at the top of their Overview or Access Control page).`,
     };
   }
 
@@ -390,7 +560,18 @@ export function unlockPatientWithPin(
         authorized_doctors: record.authorizedDoctors,
         updated_at: new Date().toISOString(),
       })
-      .then(() => {});
+      .then(() => {}, () => {});
+
+    supabase
+      .from('access_grants')
+      .upsert({
+        patient_id: record.patientId,
+        granted_to_id: doctorInfo.doctorId,
+        granted_to_role: 'doctor',
+        access_level: 'full',
+        created_at: new Date().toISOString(),
+      })
+      .then(() => {}, () => {});
   } catch {
     // ignore
   }
@@ -406,15 +587,15 @@ export function unlockPatientWithPin(
         id: record.patientId,
         name: record.patientName,
         pid: record.patientPid,
-        age: record.age || 32,
-        gender: record.gender || 'Prefer not to say',
-        bloodGroup: record.bloodGroup || 'O+',
+        age: record.age ?? null,
+        gender: record.gender ?? 'Not specified',
+        bloodGroup: record.bloodGroup ?? 'Not specified',
         phone: record.phone || '',
         email: record.email || '',
         allergies: [],
         chronicConditions: [],
         vitalsHistory: [],
-        lastVisit: now,
+        lastVisit: 'Today',
       });
       localStorage.setItem(docKey, JSON.stringify(list));
     }
@@ -426,4 +607,92 @@ export function unlockPatientWithPin(
     success: true,
     patient: record,
   };
+}
+
+/**
+ * Load all unlocked patients for a specific doctor from Supabase cloud + local storage
+ */
+export async function fetchDoctorUnlockedPatients(doctorId: string): Promise<any[]> {
+  if (!doctorId) return [];
+  const docKey = `medconnect_doctor_unlocked_${doctorId}`;
+
+  let cachedList: any[] = [];
+  try {
+    const raw = localStorage.getItem(docKey);
+    if (raw) cachedList = JSON.parse(raw);
+  } catch {
+    cachedList = [];
+  }
+
+  const patientMap = new Map<string, any>();
+  for (const p of cachedList) {
+    patientMap.set(p.id, p);
+  }
+
+  // Fetch from Supabase access_grants
+  try {
+    const { data: grants } = await supabase
+      .from('access_grants')
+      .select('patient_id')
+      .eq('granted_to_id', doctorId)
+      .is('revoked_at', null);
+
+    const grantIds = grants?.map(g => g.patient_id) || [];
+
+    // Also fetch from patient_access_codes
+    const { data: pacs } = await supabase
+      .from('patient_access_codes')
+      .select('patient_id, access_code, authorized_doctors');
+
+    if (Array.isArray(pacs)) {
+      for (const pac of pacs) {
+        if (Array.isArray(pac.authorized_doctors)) {
+          if (pac.authorized_doctors.some((d: any) => d.doctorId === doctorId)) {
+            grantIds.push(pac.patient_id);
+          }
+        }
+      }
+    }
+
+    const uniquePatientIds = Array.from(new Set(grantIds));
+
+    for (const patId of uniquePatientIds) {
+      if (!patientMap.has(patId)) {
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', patId)
+          .maybeSingle();
+
+        if (profile) {
+          const pid = `PID-${profile.id.replace(/-/g, '').slice(0, 9).toUpperCase()}`;
+          patientMap.set(profile.id, {
+            id: profile.id,
+            name: profile.full_name || 'Patient',
+            pid,
+            age: (profile.metadata as any)?.age || profile.age || null,
+            gender: (profile.metadata as any)?.gender || profile.gender || 'Not specified',
+            bloodGroup: (profile.metadata as any)?.blood_group || 'Not specified',
+            phone: profile.phone || '',
+            email: profile.email || '',
+            allergies: [],
+            chronicConditions: [],
+            vitalsHistory: [],
+            lastVisit: 'Connected',
+          });
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('Error fetching cloud unlocked patients:', err);
+  }
+
+  const result = Array.from(patientMap.values());
+  try {
+    localStorage.setItem(docKey, JSON.stringify(result));
+  } catch {
+    // ignore
+  }
+
+  return result;
 }
