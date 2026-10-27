@@ -54,6 +54,7 @@ import {
   getAllDoctorProfiles,
   updateProfile,
   saveBMIRecord,
+  deleteSymptomLog,
   type SymptomLogData,
   type VitalsData
 } from '@/lib/supabase';
@@ -204,6 +205,7 @@ const SIDEBAR_ITEMS: SidebarItem[] = [
 const COMMON_SYMPTOMS = [
   'Headache',
   'Fever',
+  'Toothache',
   'Dry Cough',
   'Fatigue',
   'Sore Throat',
@@ -214,16 +216,20 @@ const COMMON_SYMPTOMS = [
   'Joint Pain',
   'Dizziness',
   'Skin Rash',
+  'Stomach Ache',
+  'Muscle Aches',
+  'Chills',
 ];
 
 const BODY_LOCATIONS = [
   'Head / Brain',
+  'Mouth / Teeth / Jaw',
   'Chest / Heart / Lungs',
   'Abdomen / Stomach',
   'Upper / Lower Back',
   'Neck & Throat',
   'Arms & Shoulders',
-  'Legs & Knees',
+  'Legs & Joints',
   'Skin / General Body',
 ];
 
@@ -855,6 +861,10 @@ export function PatientDashboard() {
                   onSymptomLogged={newSym => {
                     setSymptomsHistoryState(prev => [newSym, ...prev]);
                     showToast('Symptom Logged', 'Your symptoms have been safely recorded to your health history.');
+                  }}
+                  onSymptomDeleted={deletedId => {
+                    setSymptomsHistoryState(prev => prev.filter(s => s.id !== deletedId));
+                    showToast('Symptom Removed', 'The symptom record was removed from your history.', 'info');
                   }}
                   onShowToast={showToast}
                 />
@@ -1633,6 +1643,7 @@ interface LogSymptomsSectionProps {
   userId: string;
   symptomsHistory: any[];
   onSymptomLogged: (sym: any) => void;
+  onSymptomDeleted?: (id: string) => void;
   onShowToast: (t: string, d?: string, tp?: 'success' | 'info' | 'error') => void;
 }
 
@@ -1640,9 +1651,11 @@ function LogSymptomsSection({
   userId,
   symptomsHistory,
   onSymptomLogged,
+  onSymptomDeleted,
   onShowToast,
 }: LogSymptomsSectionProps) {
-  const [symptomType, setSymptomType] = useState('');
+  const [selectedSymptoms, setSelectedSymptoms] = useState<string[]>([]);
+  const [customSymptom, setCustomSymptom] = useState('');
   const [severityScore, setSeverityScore] = useState(4);
   const [duration, setDuration] = useState('1-2 days');
   const [bodyLocation, setBodyLocation] = useState('Head / Brain');
@@ -1653,16 +1666,68 @@ function LogSymptomsSection({
   // Severity category
   const severityCategory = severityScore <= 3 ? 'mild' : severityScore <= 6 ? 'moderate' : 'severe';
 
+  const toggleSymptom = (chip: string) => {
+    setSelectedSymptoms(prev =>
+      prev.includes(chip) ? prev.filter(s => s !== chip) : [...prev, chip]
+    );
+  };
+
+  const clearAllSymptoms = () => {
+    setSelectedSymptoms([]);
+    setCustomSymptom('');
+  };
+
+  const handleEditSymptom = (sym: any) => {
+    const parts = (sym.symptom_type || '')
+      .split(',')
+      .map((s: string) => s.trim())
+      .filter(Boolean);
+
+    const known = parts.filter((p: string) => COMMON_SYMPTOMS.includes(p));
+    const custom = parts.filter((p: string) => !COMMON_SYMPTOMS.includes(p)).join(', ');
+
+    setSelectedSymptoms(known.length > 0 ? known : parts);
+    setCustomSymptom(custom || (known.length === 0 ? sym.symptom_type : ''));
+
+    if (sym.severity_score) setSeverityScore(sym.severity_score);
+    if (sym.duration) setDuration(sym.duration);
+    if (sym.body_location) setBodyLocation(sym.body_location);
+    if (sym.pain_level !== undefined) setPainLevel(sym.pain_level);
+    if (sym.notes) setNotes(sym.notes);
+
+    onShowToast('Symptom Loaded', 'Loaded into form. Modify symptoms and save to update.', 'info');
+  };
+
+  const handleDeleteSymptom = async (id: string) => {
+    if (!id) return;
+    try {
+      await deleteSymptomLog(id);
+      if (onSymptomDeleted) {
+        onSymptomDeleted(id);
+      }
+    } catch (err) {
+      console.error('Failed to delete symptom:', err);
+      onShowToast('Delete Failed', 'Could not delete symptom entry.', 'error');
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!symptomType.trim()) {
-      onShowToast('Symptom Required', 'Please enter or select a symptom', 'error');
+
+    const allSymptoms = [...selectedSymptoms];
+    if (customSymptom.trim() && !allSymptoms.includes(customSymptom.trim())) {
+      allSymptoms.push(customSymptom.trim());
+    }
+
+    if (allSymptoms.length === 0) {
+      onShowToast('Symptom Required', 'Please select or type at least one symptom', 'error');
       return;
     }
 
     setIsSubmitting(true);
+    const combinedSymptomType = allSymptoms.join(', ');
     const newSymptom: SymptomLogData = {
-      symptom_type: symptomType.trim(),
+      symptom_type: combinedSymptomType,
       severity: severityCategory,
       severity_score: severityScore,
       duration,
@@ -1679,17 +1744,20 @@ function LogSymptomsSection({
         created_at: new Date().toISOString(),
       });
       // Reset form
-      setSymptomType('');
+      setSelectedSymptoms([]);
+      setCustomSymptom('');
       setNotes('');
       setSeverityScore(4);
       setPainLevel(3);
     } catch {
-      onShowToast('Notice', 'Symptom saved locally to your device', 'info');
+      onShowToast('Notice', 'Symptoms saved locally to your device', 'info');
       onSymptomLogged({
         ...newSymptom,
         id: `sym-${Date.now()}`,
         created_at: new Date().toISOString(),
       });
+      setSelectedSymptoms([]);
+      setCustomSymptom('');
     } finally {
       setIsSubmitting(false);
     }
@@ -1702,46 +1770,103 @@ function LogSymptomsSection({
         <div>
           <h2 className="text-xl font-bold text-white">Log Current Symptoms</h2>
           <p className="text-xs text-slate-400 mt-1">
-            Real-time symptom tracking feeds our AI triage engine and updates your attending physicians.
+            Tap all the symptoms you're currently experiencing. You can pick multiple symptoms at once and change them anytime.
           </p>
         </div>
 
-        {/* Quick Chips */}
+        {/* Multi-Select Common Symptoms */}
         <div>
-          <label className="block text-xs font-semibold text-slate-300 mb-2">
-            Quick-Select Common Symptoms
-          </label>
+          <div className="flex items-center justify-between mb-2.5">
+            <label className="block text-xs font-semibold text-slate-300">
+              Select Symptoms <span className="text-teal-400 font-normal">(tap all that apply)</span>
+            </label>
+            <div className="flex items-center gap-2">
+              {selectedSymptoms.length > 0 && (
+                <>
+                  <span className="text-[11px] font-bold text-teal-300 bg-teal-500/20 border border-teal-500/30 px-2.5 py-0.5 rounded-full">
+                    {selectedSymptoms.length} selected
+                  </span>
+                  <button
+                    type="button"
+                    onClick={clearAllSymptoms}
+                    className="text-[11px] text-slate-400 hover:text-rose-400 transition underline underline-offset-2"
+                  >
+                    Clear all
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+
           <div className="flex flex-wrap gap-2">
-            {COMMON_SYMPTOMS.map(chip => (
-              <button
-                key={chip}
-                type="button"
-                onClick={() => setSymptomType(chip)}
-                className={cn(
-                  'px-3 py-1.5 rounded-xl text-xs font-medium transition',
-                  symptomType === chip
-                    ? 'bg-teal-500 text-slate-950 font-bold shadow'
-                    : 'bg-slate-800/60 text-slate-300 hover:bg-slate-800 hover:text-white border border-slate-700/60'
-                )}
-              >
-                {chip}
-              </button>
-            ))}
+            {COMMON_SYMPTOMS.map(chip => {
+              const isSelected = selectedSymptoms.includes(chip);
+              return (
+                <button
+                  key={chip}
+                  type="button"
+                  onClick={() => toggleSymptom(chip)}
+                  className={cn(
+                    'px-3.5 py-2 rounded-xl text-xs font-medium transition flex items-center gap-1.5 cursor-pointer select-none',
+                    isSelected
+                      ? 'bg-teal-500 text-slate-950 font-bold shadow-md shadow-teal-500/30 ring-2 ring-teal-300/50 scale-[1.02]'
+                      : 'bg-slate-800/60 text-slate-300 hover:bg-slate-800 hover:text-white border border-slate-700/60'
+                  )}
+                >
+                  {isSelected ? (
+                    <Check className="w-3.5 h-3.5 stroke-[2.5]" />
+                  ) : (
+                    <Plus className="w-3.5 h-3.5 opacity-50" />
+                  )}
+                  {chip}
+                </button>
+              );
+            })}
           </div>
         </div>
 
+        {/* Selected Symptoms Summary Chips */}
+        {selectedSymptoms.length > 0 && (
+          <div className="p-3.5 rounded-2xl bg-teal-950/40 border border-teal-500/30 space-y-2">
+            <div className="flex items-center justify-between text-xs">
+              <span className="font-semibold text-teal-300 flex items-center gap-1.5">
+                <CheckCircle2 className="w-3.5 h-3.5 text-teal-400" />
+                Selected symptoms ({selectedSymptoms.length}):
+              </span>
+              <span className="text-[10px] text-teal-400/80">Tap (✕) to remove</span>
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {selectedSymptoms.map(sym => (
+                <span
+                  key={sym}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold bg-teal-500/20 text-teal-200 border border-teal-500/30"
+                >
+                  {sym}
+                  <button
+                    type="button"
+                    onClick={() => toggleSymptom(sym)}
+                    className="hover:text-rose-300 hover:bg-rose-500/20 rounded p-0.5 transition ml-0.5"
+                    title={`Remove ${sym}`}
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+
         <form onSubmit={handleSubmit} className="space-y-5">
-          {/* Custom Symptom Input */}
+          {/* Custom / Additional Symptom Input */}
           <div>
             <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-              Symptom Description
+              Other / Specific Symptom Notes <span className="text-slate-500 font-normal">(Optional if selected above)</span>
             </label>
             <input
               type="text"
-              required
-              placeholder="e.g. Throbbing left temple headache with light sensitivity"
-              value={symptomType}
-              onChange={e => setSymptomType(e.target.value)}
+              placeholder="e.g. Sharp pain when chewing, sensitivity to light, or any unlisted symptom"
+              value={customSymptom}
+              onChange={e => setCustomSymptom(e.target.value)}
               className="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-700 focus:border-teal-400 focus:ring-1 focus:ring-teal-400 text-sm text-slate-100 outline-none transition"
             />
           </div>
@@ -1847,16 +1972,19 @@ function LogSymptomsSection({
 
           <button
             type="submit"
-            disabled={isSubmitting}
-            className="w-full py-3 rounded-xl bg-gradient-to-r from-teal-500 to-cyan-500 hover:from-teal-400 hover:to-cyan-400 text-slate-950 font-bold text-sm shadow-lg shadow-teal-500/20 transition flex items-center justify-center gap-2 disabled:opacity-50"
+            disabled={isSubmitting || (selectedSymptoms.length === 0 && !customSymptom.trim())}
+            className="w-full py-3 rounded-xl bg-gradient-to-r from-teal-500 to-cyan-500 hover:from-teal-400 hover:to-cyan-400 text-slate-950 font-bold text-sm shadow-lg shadow-teal-500/20 transition flex items-center justify-center gap-2 disabled:opacity-50 cursor-pointer"
           >
             {isSubmitting ? (
               <>
-                <RefreshCw className="w-4 h-4 animate-spin" /> Saving Symptom...
+                <RefreshCw className="w-4 h-4 animate-spin" /> Saving Symptoms...
               </>
             ) : (
               <>
-                <CheckCircle2 className="w-4 h-4" /> Save & Log Symptom
+                <CheckCircle2 className="w-4 h-4" />
+                {selectedSymptoms.length > 0 || customSymptom.trim()
+                  ? `Save & Log ${selectedSymptoms.length + (customSymptom.trim() && !selectedSymptoms.includes(customSymptom.trim()) ? 1 : 0)} Symptom${(selectedSymptoms.length + (customSymptom.trim() && !selectedSymptoms.includes(customSymptom.trim()) ? 1 : 0)) > 1 ? 's' : ''}`
+                  : 'Select or Enter Symptoms to Log'}
               </>
             )}
           </button>
@@ -1866,8 +1994,15 @@ function LogSymptomsSection({
       {/* History Panel */}
       <div className="rounded-3xl bg-slate-900/60 border border-slate-800/80 p-6 backdrop-blur-xl flex flex-col justify-between">
         <div>
-          <h3 className="font-bold text-white text-base mb-1">Logged Symptom History</h3>
-          <p className="text-xs text-slate-400 mb-4">Past reports recorded across all devices</p>
+          <div className="flex items-center justify-between mb-1">
+            <h3 className="font-bold text-white text-base">Logged Symptom History</h3>
+            {symptomsHistory.length > 0 && (
+              <span className="text-[10px] text-teal-400 bg-teal-500/10 border border-teal-500/20 px-2 py-0.5 rounded-full">
+                {symptomsHistory.length} record{symptomsHistory.length > 1 ? 's' : ''}
+              </span>
+            )}
+          </div>
+          <p className="text-xs text-slate-400 mb-4">Past reports recorded across all devices. You can edit or remove any record anytime.</p>
 
           <div className="space-y-3 max-h-[500px] overflow-y-auto pr-1">
             {symptomsHistory.length > 0 ? (
@@ -1876,20 +2011,38 @@ function LogSymptomsSection({
                   key={sym.id || i}
                   className="p-3.5 rounded-2xl bg-white/5 border border-white/10 space-y-1.5"
                 >
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-slate-100">{sym.symptom_type}</span>
-                    <span
-                      className={cn(
-                        'text-[10px] px-2 py-0.5 rounded-full font-semibold capitalize',
-                        sym.severity === 'severe'
-                          ? 'bg-rose-500/20 text-rose-300'
-                          : sym.severity === 'moderate'
-                          ? 'bg-amber-500/20 text-amber-300'
-                          : 'bg-emerald-500/20 text-emerald-300'
-                      )}
-                    >
-                      {sym.severity}
-                    </span>
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs font-bold text-slate-100 flex-1 break-words">{sym.symptom_type}</span>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <span
+                        className={cn(
+                          'text-[10px] px-2 py-0.5 rounded-full font-semibold capitalize',
+                          sym.severity === 'severe'
+                            ? 'bg-rose-500/20 text-rose-300'
+                            : sym.severity === 'moderate'
+                            ? 'bg-amber-500/20 text-amber-300'
+                            : 'bg-emerald-500/20 text-emerald-300'
+                        )}
+                      >
+                        {sym.severity}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => handleEditSymptom(sym)}
+                        className="text-[10px] px-2 py-0.5 rounded-md bg-teal-500/15 hover:bg-teal-500 text-teal-300 hover:text-slate-950 transition border border-teal-500/30 font-medium cursor-pointer"
+                        title="Load into form to edit or change symptoms"
+                      >
+                        Edit
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteSymptom(sym.id)}
+                        className="p-1 rounded-md bg-slate-800 text-slate-400 hover:text-rose-300 hover:bg-rose-500/20 transition cursor-pointer"
+                        title="Remove this record"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
                   </div>
                   <p className="text-[11px] text-slate-400">
                     Location: {sym.body_location || 'General'} • Duration: {sym.duration || 'N/A'}
@@ -1914,7 +2067,7 @@ function LogSymptomsSection({
 
         <div className="pt-4 border-t border-slate-800/80 text-[11px] text-slate-400 flex items-center gap-2">
           <Info className="w-3.5 h-3.5 text-teal-400 flex-shrink-0" />
-          <span>Entries are permanently timestamped and attached to your doctor's dashboard.</span>
+          <span>Entries update in real time and are attached to your doctor's dashboard.</span>
         </div>
       </div>
     </div>

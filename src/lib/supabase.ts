@@ -252,6 +252,24 @@ export async function getSymptomHistory(limit = 10, userId = '') {
   }
 }
 
+export async function deleteSymptomLog(id: string) {
+  if (!id) return;
+  try {
+    await supabase.from('symptom_logs').delete().eq('id', id);
+  } catch {
+    // fallback
+  }
+
+  const KEY = 'medconnect_symptom_logs';
+  try {
+    const all = JSON.parse(localStorage.getItem(KEY) || '[]');
+    const filtered = all.filter((r: any) => r.id !== id);
+    localStorage.setItem(KEY, JSON.stringify(filtered));
+  } catch (err) {
+    console.error('Failed to remove symptom log from localStorage', err);
+  }
+}
+
 export interface VitalsData {
   heart_rate?: number | null;
   systolic_bp?: number | null;
