@@ -31,7 +31,17 @@ export async function fetchMessages(
   if (!userId1 || !userId2) return [];
   const cacheKey = getCacheKey(userId1, userId2);
 
+  // Load deleted message IDs tombstone cache to prevent resurrection
+  let deletedIds = new Set<string>();
+  try {
+    const rawDel = localStorage.getItem('medconnect_deleted_msg_ids');
+    if (rawDel) deletedIds = new Set(JSON.parse(rawDel));
+  } catch {
+    // ignore
+  }
+
   let cloudMessages: ChatMessage[] = [];
+  let cloudSuccess = false;
   try {
     const { data, error } = await supabase
       .from('messages')
@@ -40,23 +50,26 @@ export async function fetchMessages(
       .order('created_at', { ascending: true });
 
     if (!error && Array.isArray(data)) {
-      cloudMessages = data.map((row: any) => {
-        const isSelf = row.sender_id === currentUserId;
-        const role = isSelf
-          ? currentUserRole
-          : (currentUserRole === 'doctor' ? 'patient' : 'doctor');
+      cloudSuccess = true;
+      cloudMessages = data
+        .filter((row: any) => !deletedIds.has(row.id))
+        .map((row: any) => {
+          const isSelf = row.sender_id === currentUserId;
+          const role = isSelf
+            ? currentUserRole
+            : (currentUserRole === 'doctor' ? 'patient' : 'doctor');
 
-        return {
-          id: row.id,
-          senderId: row.sender_id,
-          receiverId: row.receiver_id,
-          text: row.content,
-          senderRole: role,
-          timestamp: new Date(row.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-          createdAt: row.created_at,
-          isRead: Boolean(row.is_read),
-        };
-      });
+          return {
+            id: row.id,
+            senderId: row.sender_id,
+            receiverId: row.receiver_id,
+            text: row.content,
+            senderRole: role,
+            timestamp: new Date(row.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+            createdAt: row.created_at,
+            isRead: Boolean(row.is_read),
+          };
+        });
     }
   } catch (err) {
     console.warn('Supabase fetchMessages error, falling back to cache:', err);
@@ -70,19 +83,37 @@ export async function fetchMessages(
   } catch {
     localMessages = [];
   }
+  localMessages = localMessages.filter(m => !deletedIds.has(m.id));
 
-  // Merge cloud and local, avoiding duplicates by id
-  const map = new Map<string, ChatMessage>();
-  for (const m of localMessages) {
-    map.set(m.id, m);
+  let merged: ChatMessage[];
+  if (cloudSuccess) {
+    // If cloud succeeded, use authoritative cloud records + any pending optimistic temp messages
+    const pendingLocal = localMessages.filter(m => m.id.startsWith('msg-'));
+    const map = new Map<string, ChatMessage>();
+    for (const m of cloudMessages) {
+      map.set(m.id, m);
+    }
+    for (const m of pendingLocal) {
+      if (!map.has(m.id)) {
+        map.set(m.id, m);
+      }
+    }
+    merged = Array.from(map.values()).sort(
+      (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+    );
+  } else {
+    // Offline fallback
+    const map = new Map<string, ChatMessage>();
+    for (const m of localMessages) {
+      map.set(m.id, m);
+    }
+    for (const m of cloudMessages) {
+      map.set(m.id, m);
+    }
+    merged = Array.from(map.values()).sort(
+      (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+    );
   }
-  for (const m of cloudMessages) {
-    map.set(m.id, m);
-  }
-
-  const merged = Array.from(map.values()).sort(
-    (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
-  );
 
   // Update local cache
   try {
@@ -92,6 +123,82 @@ export async function fetchMessages(
   }
 
   return merged;
+}
+
+export async function deleteChatMessage(
+  messageId: string,
+  userId1: string,
+  userId2: string
+): Promise<boolean> {
+  if (!messageId) return false;
+
+  // 1. Mark in tombstone cache to prevent any local resurrections
+  try {
+    const rawDel = localStorage.getItem('medconnect_deleted_msg_ids');
+    const delList: string[] = rawDel ? JSON.parse(rawDel) : [];
+    if (!delList.includes(messageId)) {
+      delList.push(messageId);
+      localStorage.setItem('medconnect_deleted_msg_ids', JSON.stringify(delList.slice(-200)));
+    }
+  } catch {
+    // ignore
+  }
+
+  // 2. Remove immediately from local thread cache
+  if (userId1 && userId2) {
+    const cacheKey = getCacheKey(userId1, userId2);
+    try {
+      const raw = localStorage.getItem(cacheKey);
+      if (raw) {
+        const list: ChatMessage[] = JSON.parse(raw);
+        const filtered = list.filter(m => m.id !== messageId);
+        localStorage.setItem(cacheKey, JSON.stringify(filtered));
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  // 3. Delete from Supabase cloud database
+  try {
+    const { error } = await supabase
+      .from('messages')
+      .delete()
+      .eq('id', messageId);
+
+    if (error) {
+      console.warn('Supabase delete message error:', error);
+    }
+  } catch (err) {
+    console.warn('Exception deleting message from Supabase:', err);
+  }
+
+  return true;
+}
+
+export async function clearChatThread(
+  userId1: string,
+  userId2: string
+): Promise<boolean> {
+  if (!userId1 || !userId2) return false;
+
+  const cacheKey = getCacheKey(userId1, userId2);
+  try {
+    localStorage.removeItem(cacheKey);
+  } catch {
+    // ignore
+  }
+
+  try {
+    await supabase
+      .from('messages')
+      .delete()
+      .or(`and(sender_id.eq.${userId1},receiver_id.eq.${userId2}),and(sender_id.eq.${userId2},receiver_id.eq.${userId1})`);
+  } catch (err) {
+    console.warn('Exception clearing chat thread from Supabase:', err);
+  }
+
+  return true;
 }
 
 export async function sendChatMessage(

@@ -49,14 +49,23 @@ import {
   ArrowRight,
   Key,
   Lock,
-  Unlock
+  Unlock,
+  Trash2
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase, getSymptomHistory } from '@/lib/supabase';
 import { DiagnosticImagingVault } from '@/components/medical/DiagnosticImagingVault';
 import { unlockPatientWithPin, fetchDoctorUnlockedPatients } from '@/lib/accessControl';
-import { fetchMessages, sendChatMessage, getUnreadMessagesCount, markMessagesAsRead, type ChatMessage } from '@/lib/messaging';
+import {
+  fetchMessages,
+  sendChatMessage,
+  deleteChatMessage,
+  clearChatThread,
+  getUnreadMessagesCount,
+  markMessagesAsRead,
+  type ChatMessage
+} from '@/lib/messaging';
 
 // Types
 export interface Patient {
@@ -658,6 +667,30 @@ export function DoctorDashboard() {
     }
   };
 
+  const handleDeleteMessage = async (messageId: string) => {
+    if (!user?.id || !selectedChatPatientId || !messageId) return;
+    setCurrentChatMessages(prev => prev.filter(m => m.id !== messageId));
+    try {
+      await deleteChatMessage(messageId, user.id, selectedChatPatientId);
+      showToast('Message deleted');
+    } catch (err) {
+      console.error('Failed to delete message:', err);
+      showToast('Failed to delete message');
+    }
+  };
+
+  const handleClearChat = async () => {
+    if (!user?.id || !selectedChatPatientId) return;
+    setCurrentChatMessages([]);
+    try {
+      await clearChatThread(user.id, selectedChatPatientId);
+      showToast('Conversation cleared');
+    } catch (err) {
+      console.error('Failed to clear chat:', err);
+      showToast('Failed to clear conversation');
+    }
+  };
+
   const waitingCount = appointments.filter(a => a.status === 'Waiting').length;
 
   // Render navigation items with real dynamic badges (zero mock counters)
@@ -1036,6 +1069,8 @@ export function DoctorDashboard() {
                 setInput={setChatInput}
                 onSendMessage={handleSendMessage}
                 onSendTemplate={sendQuickTemplate}
+                onDeleteMessage={handleDeleteMessage}
+                onClearChat={handleClearChat}
                 onOpenUnlockModal={() => setIsUnlockModalOpen(true)}
               />
             )}
@@ -3109,9 +3144,13 @@ function MessagesSection({
   setInput,
   onSendMessage,
   onSendTemplate,
+  onDeleteMessage,
+  onClearChat,
   onOpenUnlockModal
 }: any) {
   const [showPatientListOnMobile, setShowPatientListOnMobile] = useState(false);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [isClearConfirmOpen, setIsClearConfirmOpen] = useState(false);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const isAtBottomRef = useRef(true);
   const prevMessagesCountRef = useRef(0);
@@ -3247,6 +3286,18 @@ function MessagesSection({
               <p className="text-[10px] text-teal-400 font-mono truncate">{activePatient?.pid}</p>
             </div>
           </div>
+
+          {patientMessages.length > 0 && onClearChat && (
+            <button
+              type="button"
+              onClick={() => setIsClearConfirmOpen(true)}
+              className="px-2.5 py-1 rounded-lg bg-white/5 hover:bg-rose-500/10 text-slate-400 hover:text-rose-300 border border-white/5 text-[11px] flex items-center gap-1.5 transition cursor-pointer shrink-0"
+              title="Clear all messages in this conversation"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Clear Chat</span>
+            </button>
+          )}
         </div>
 
         {/* Quick Response Templates */}
@@ -3285,20 +3336,56 @@ function MessagesSection({
           ) : (
             patientMessages.map((msg: any) => {
               const isDoctor = msg.senderRole === 'doctor' || msg.sender === 'doctor';
+              const isConfirming = confirmDeleteId === msg.id;
+
               return (
                 <div
                   key={msg.id}
-                  className={cn('flex flex-col', isDoctor ? 'items-end' : 'items-start')}
+                  className={cn('flex flex-col group', isDoctor ? 'items-end' : 'items-start')}
                 >
-                  <div
-                    className={cn(
-                      'max-w-[85%] sm:max-w-[75%] px-3.5 sm:px-4 py-2.5 rounded-2xl text-xs leading-relaxed break-words',
-                      isDoctor
-                        ? 'bg-gradient-to-r from-teal-500 to-cyan-600 text-slate-950 font-medium rounded-br-none'
-                        : 'bg-white/10 text-slate-200 rounded-bl-none border border-white/10'
+                  <div className={cn('flex items-center gap-1.5 max-w-[90%] sm:max-w-[78%]', isDoctor ? 'flex-row-reverse' : 'flex-row')}>
+                    <div
+                      className={cn(
+                        'px-3.5 sm:px-4 py-2.5 rounded-2xl text-xs leading-relaxed break-words',
+                        isDoctor
+                          ? 'bg-gradient-to-r from-teal-500 to-cyan-600 text-slate-950 font-medium rounded-br-none'
+                          : 'bg-white/10 text-slate-200 rounded-bl-none border border-white/10'
+                      )}
+                    >
+                      {msg.text}
+                    </div>
+
+                    {isConfirming ? (
+                      <div className="flex items-center gap-1 bg-slate-900/95 border border-rose-500/40 rounded-xl px-2 py-1 text-[11px] shadow-lg shrink-0 z-10 animate-in fade-in zoom-in-95">
+                        <span className="text-rose-300 font-medium">Delete?</span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (onDeleteMessage) onDeleteMessage(msg.id);
+                            setConfirmDeleteId(null);
+                          }}
+                          className="px-1.5 py-0.5 rounded bg-rose-500 text-slate-950 font-bold hover:bg-rose-400 transition cursor-pointer text-[10px]"
+                        >
+                          Yes
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setConfirmDeleteId(null)}
+                          className="px-1 py-0.5 text-slate-400 hover:text-white transition cursor-pointer text-[10px]"
+                        >
+                          No
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => setConfirmDeleteId(msg.id)}
+                        className="opacity-40 sm:opacity-0 group-hover:opacity-100 focus:opacity-100 p-1.5 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 transition shrink-0 cursor-pointer"
+                        title="Delete this message"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
                     )}
-                  >
-                    {msg.text}
                   </div>
                   <span className="text-[10px] text-slate-500 mt-1 px-1">{msg.timestamp}</span>
                 </div>
@@ -3336,6 +3423,49 @@ function MessagesSection({
             <Send className="w-4 h-4" />
           </button>
         </form>
+
+        {/* Clear Thread Confirmation Modal */}
+        <AnimatePresence>
+          {isClearConfirmOpen && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
+              <motion.div
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.95 }}
+                className="w-full max-w-sm rounded-2xl bg-slate-900 border border-slate-800 p-5 shadow-2xl space-y-4"
+              >
+                <div className="w-10 h-10 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-400 flex items-center justify-center">
+                  <Trash2 className="w-5 h-5" />
+                </div>
+                <div>
+                  <h4 className="text-base font-bold text-white">Clear Chat History</h4>
+                  <p className="text-xs text-slate-400 mt-1 leading-relaxed">
+                    Are you sure you want to delete all messages in the consultation thread with <strong className="text-slate-200">{activePatient?.name}</strong>? This action will remove messages permanently.
+                  </p>
+                </div>
+                <div className="flex items-center justify-end gap-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setIsClearConfirmOpen(false)}
+                    className="px-3 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 text-xs font-semibold transition cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (onClearChat) onClearChat();
+                      setIsClearConfirmOpen(false);
+                    }}
+                    className="px-3.5 py-1.5 rounded-xl bg-rose-500 hover:bg-rose-600 text-white text-xs font-bold transition shadow shadow-rose-500/20 cursor-pointer"
+                  >
+                    Clear All Messages
+                  </button>
+                </div>
+              </motion.div>
+            </div>
+          )}
+        </AnimatePresence>
       </div>
     </motion.div>
   );
