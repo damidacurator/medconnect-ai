@@ -54,7 +54,7 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/useAuth';
-import { supabase, getSymptomHistory } from '@/lib/supabase';
+import { supabase, getSymptomHistory, saveConsultationRecord, getDoctorConsultations } from '@/lib/supabase';
 import { DiagnosticImagingVault } from '@/components/medical/DiagnosticImagingVault';
 import { unlockPatientWithPin, fetchDoctorUnlockedPatients } from '@/lib/accessControl';
 import {
@@ -190,7 +190,18 @@ export function DoctorDashboard() {
     return INITIAL_PATIENTS;
   });
   const [appointments, setAppointments] = useState<Appointment[]>(INITIAL_APPOINTMENTS);
-  const [consultations, setConsultations] = useState<ConsultationRecord[]>(INITIAL_CONSULTATIONS);
+  const [consultations, setConsultations] = useState<ConsultationRecord[]>(() => {
+    try {
+      const docId = user?.id || 'doc-1';
+      const docSaved = localStorage.getItem(`medconnect_consultations_doctor_${docId}`);
+      if (docSaved) return JSON.parse(docSaved);
+      const allSaved = localStorage.getItem('medconnect_consultations_all');
+      if (allSaved) return JSON.parse(allSaved);
+    } catch {
+      // ignore
+    }
+    return INITIAL_CONSULTATIONS;
+  });
   const [selectedPatientForRecord, setSelectedPatientForRecord] = useState<Patient | null>(null);
 
   // Auto-sync unlocked patients from Supabase cloud
@@ -208,7 +219,43 @@ export function DoctorDashboard() {
       }
     }
     loadUnlocked();
-    return () => { isMounted = false; };
+
+    const handleProfileUpdate = () => {
+      loadUnlocked();
+    };
+    window.addEventListener('medconnect:profile-updated', handleProfileUpdate);
+
+    return () => {
+      isMounted = false;
+      window.removeEventListener('medconnect:profile-updated', handleProfileUpdate);
+    };
+  }, [user?.id]);
+
+  // Auto-sync doctor consultations from Supabase cloud
+  useEffect(() => {
+    let isMounted = true;
+    async function loadDoctorConsults() {
+      if (!user?.id) return;
+      try {
+        const cList = await getDoctorConsultations(user.id);
+        if (isMounted && Array.isArray(cList) && cList.length > 0) {
+          setConsultations(cList as any);
+        }
+      } catch (err) {
+        console.warn('Error fetching doctor consultations from cloud:', err);
+      }
+    }
+    loadDoctorConsults();
+
+    const handleEmrUpdate = () => {
+      loadDoctorConsults();
+    };
+    window.addEventListener('medconnect:emr-updated', handleEmrUpdate);
+
+    return () => {
+      isMounted = false;
+      window.removeEventListener('medconnect:emr-updated', handleEmrUpdate);
+    };
   }, [user?.id]);
 
   // Unlock PIN Modal State
@@ -565,29 +612,37 @@ export function DoctorDashboard() {
       followUpNotes
     };
 
-    // Save locally
-    setConsultations(prev => [newRecord, ...prev]);
+    // Save to Multi-Tier Storage (LocalStorage, Patient & Doctor Profile Metadata, Cloud Tables, Real-time Events)
+    try {
+      await saveConsultationRecord(newRecord as any);
+    } catch (saveErr) {
+      console.warn('Consultation save error:', saveErr);
+    }
+
+    setConsultations(prev => [newRecord, ...prev.filter(c => c.id !== newRecord.id)]);
 
     // Also update appointment status in queue if present
     setAppointments(prev =>
       prev.map(apt => (apt.patientId === selectedPatientForConsult.id ? { ...apt, status: 'Completed' } : apt))
     );
 
-    // Attempt Supabase insert if tables exist (silent fallback to ensure offline / prototype stability)
+    // Update patient's lastVisit in unlocked patients cache
+    setPatients(prev =>
+      prev.map(p =>
+        p.id === selectedPatientForConsult.id
+          ? { ...p, lastVisit: 'Today', vitalsTaken: true }
+          : p
+      )
+    );
     try {
-      if (supabase) {
-        await supabase.from('consultations').insert({
-          emr_code: emrCode,
-          patient_id: selectedPatientForConsult.id,
-          chief_complaint: chiefComplaint,
-          diagnosis: diagnosisTags.join(', '),
-          treatment_plan: treatmentPlan,
-          vitals: vitalsInput
-        });
-      }
-    } catch (e) {
-      // Graceful fallback
-    }
+      const docId = user?.id || 'doc-1';
+      const docKey = `medconnect_doctor_unlocked_${docId}`;
+      const cached = JSON.parse(localStorage.getItem(docKey) || '[]');
+      const updatedCache = cached.map((p: any) =>
+        p.id === selectedPatientForConsult.id ? { ...p, lastVisit: 'Today', vitalsTaken: true } : p
+      );
+      localStorage.setItem(docKey, JSON.stringify(updatedCache));
+    } catch { /* ignore */ }
 
     showToast(`Consultation record saved successfully with code ${emrCode}`);
     setConsultationStep(1);
@@ -2555,7 +2610,7 @@ function PatientRecordsSection({
                               <div className="min-w-0">
                                 <p className="text-xs font-semibold text-white truncate">{p.name}</p>
                                 <p className="text-[10px] text-slate-400 font-mono">
-                                  {p.pid} • {p.age}y {p.gender}
+                                  {p.pid} • {p.age && p.age > 0 ? `${p.age}y` : 'Age N/A'} {p.gender}
                                 </p>
                               </div>
                             </div>
@@ -2695,7 +2750,7 @@ function PatientRecordsSection({
             </div>
 
             <div className="flex items-center gap-2 text-[10px] sm:text-[11px] text-slate-300 shrink-0">
-              <span className="hidden md:inline">{patient.age}y {patient.gender}</span>
+              <span className="hidden md:inline">{patient.age && patient.age > 0 ? `${patient.age}y` : 'Age N/A'} {patient.gender}</span>
               <span className="hidden md:inline text-slate-600">|</span>
               <span className="hidden sm:inline">Blood: <strong className="text-teal-300">{patient.bloodGroup || 'N/A'}</strong></span>
               <span className="text-emerald-400 font-semibold flex items-center gap-1 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-full">
@@ -2725,7 +2780,7 @@ function PatientRecordsSection({
                 <div className="space-y-2.5 text-xs">
                   <div className="flex justify-between py-1 border-b border-white/5">
                     <span className="text-slate-400">Demographics</span>
-                    <span className="text-slate-200">{patient.age} yrs • {patient.gender}</span>
+                    <span className="text-slate-200">{patient.age && patient.age > 0 ? `${patient.age} yrs` : 'Age N/A'} • {patient.gender}</span>
                   </div>
                   <div className="flex justify-between py-1 border-b border-white/5">
                     <span className="text-slate-400">Blood Group</span>

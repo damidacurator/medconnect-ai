@@ -56,7 +56,7 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/useAuth';
-import { supabase } from '@/lib/supabase';
+import { supabase, getAllConsultations } from '@/lib/supabase';
 
 // ============================================================================
 // TYPES & INTERFACES
@@ -467,6 +467,86 @@ export function InstitutionDashboard() {
           }));
           setDoctors(prev => (prev.length === 0 ? mappedDocs : prev));
         }
+
+        // Fetch real patients from profiles with role patient
+        const { data: dbPatients } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('role', 'patient')
+          .limit(50);
+
+        if (dbPatients && dbPatients.length > 0) {
+          const mappedPatients: PatientRecord[] = dbPatients.map((p: any) => {
+            const pid = p.unique_code || `PID-${p.id.replace(/-/g, '').slice(0, 9).toUpperCase()}`;
+            const pMeta = (p.metadata as any) || {};
+            let ageVal = p.age ?? pMeta.age ?? 0;
+            if (!ageVal) {
+              try {
+                const stored = localStorage.getItem(`medconnect_patient_age_${p.id}`);
+                if (stored) ageVal = parseInt(stored, 10);
+              } catch { /* ignore */ }
+            }
+
+            return {
+              id: p.id,
+              pid,
+              name: p.full_name || 'Registered Patient',
+              age: Number(ageVal) || 28,
+              gender: p.gender || pMeta.gender || 'prefer_not_to_say',
+              bloodGroup: pMeta.blood_group || pMeta.bloodGroup || 'O+',
+              phone: p.phone || 'N/A',
+              email: p.email || 'N/A',
+              registeredDate: p.created_at ? p.created_at.split('T')[0] : '2026-01-10',
+              lastVisit: pMeta.latest_consultation?.date || 'Recent',
+              department: 'General Medicine',
+              assignedDoctor: pMeta.latest_consultation?.doctorName || 'Attending Physician',
+              aiRiskLevel: 'normal',
+              historicalVitals: Array.isArray(pMeta.vitals_history) ? pMeta.vitals_history : [],
+              diagnoses: pMeta.latest_consultation?.diagnoses || ['General Health Assessment'],
+            };
+          });
+
+          setPatients(prev => {
+            const existingIds = new Set(prev.map(item => item.id));
+            const newOnes = mappedPatients.filter(m => !existingIds.has(m.id));
+            return [...newOnes, ...prev];
+          });
+        }
+
+        // Fetch consultations and enrich activity feed and prescriptions
+        try {
+          const allConsults = await getAllConsultations();
+          if (Array.isArray(allConsults) && allConsults.length > 0) {
+            const mappedConsultRx: PrescriptionRecord[] = [];
+            allConsults.forEach(c => {
+              if (Array.isArray(c.prescriptions)) {
+                c.prescriptions.forEach((rx: any, idx: number) => {
+                  mappedConsultRx.push({
+                    id: rx.id || `rx-${c.emrCode}-${idx}`,
+                    code: c.emrCode || `RX-${c.id.slice(0, 6).toUpperCase()}`,
+                    patientName: c.patientName || `Patient`,
+                    patientPid: c.pid || c.patientId.slice(0, 8),
+                    doctorName: c.doctorName || 'Attending Physician',
+                    medicationName: rx.medication,
+                    dosage: rx.dosage,
+                    frequency: rx.frequency,
+                    duration: rx.duration,
+                    prescribedDate: c.date,
+                    status: 'Pending Fulfillment',
+                    instructions: rx.instructions || '',
+                  });
+                });
+              }
+            });
+            if (mappedConsultRx.length > 0) {
+              setPrescriptions(prev => {
+                const existingIds = new Set(prev.map(p => p.id));
+                const fresh = mappedConsultRx.filter(m => !existingIds.has(m.id));
+                return [...fresh, ...prev];
+              });
+            }
+          }
+        } catch { /* ignore */ }
 
         // Fetch real prescriptions from database
         const { data: dbPrescriptions } = await supabase

@@ -457,14 +457,29 @@ export async function unlockPatientWithPin(
 
         if (match) {
           const patPid = `PID-${match.id.replace(/-/g, '').slice(0, 9).toUpperCase()}`;
+          let patAge = (match.metadata as any)?.age ?? match.age ?? null;
+          if (!patAge) {
+            try {
+              const cached = localStorage.getItem(`medconnect_patient_age_${match.id}`);
+              if (cached) patAge = parseInt(cached, 10);
+            } catch { /* ignore */ }
+          }
+          let patGender = (match.metadata as any)?.gender ?? match.gender ?? null;
+          if (!patGender) {
+            try {
+              const cached = localStorage.getItem(`medconnect_patient_gender_${match.id}`);
+              if (cached) patGender = cached;
+            } catch { /* ignore */ }
+          }
+
           record = {
             accessCode: patPid,
             patientId: match.id,
             patientName: match.full_name || 'Patient',
             patientPid: patPid,
             email: match.email || '',
-            gender: (match.metadata as any)?.gender || match.gender,
-            age: (match.metadata as any)?.age || match.age,
+            gender: patGender || 'prefer_not_to_say',
+            age: patAge || undefined,
             bloodGroup: (match.metadata as any)?.blood_group,
             phone: match.phone || '',
             authorizedDoctors: [],
@@ -492,14 +507,29 @@ export async function unlockPatientWithPin(
               .maybeSingle();
 
             const patPid = pacMatch.access_code || `PID-${pacMatch.patient_id.replace(/-/g, '').slice(0, 9).toUpperCase()}`;
+            let patAge = (pData?.metadata as any)?.age ?? pData?.age ?? null;
+            if (!patAge) {
+              try {
+                const cached = localStorage.getItem(`medconnect_patient_age_${pacMatch.patient_id}`);
+                if (cached) patAge = parseInt(cached, 10);
+              } catch { /* ignore */ }
+            }
+            let patGender = (pData?.metadata as any)?.gender ?? pData?.gender ?? null;
+            if (!patGender) {
+              try {
+                const cached = localStorage.getItem(`medconnect_patient_gender_${pacMatch.patient_id}`);
+                if (cached) patGender = cached;
+              } catch { /* ignore */ }
+            }
+
             record = {
               accessCode: patPid,
               patientId: pacMatch.patient_id,
               patientName: pData?.full_name || 'Patient',
               patientPid: patPid,
               email: pData?.email || '',
-              gender: (pData?.metadata as any)?.gender || pData?.gender,
-              age: (pData?.metadata as any)?.age || pData?.age,
+              gender: patGender || 'prefer_not_to_say',
+              age: patAge || undefined,
               bloodGroup: (pData?.metadata as any)?.blood_group,
               phone: pData?.phone || '',
               authorizedDoctors: Array.isArray(pacMatch.authorized_doctors) ? pacMatch.authorized_doctors : [],

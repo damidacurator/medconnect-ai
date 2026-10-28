@@ -103,9 +103,15 @@ export function useAuth(): UseAuthReturn {
       }
     );
 
+    const handleProfileUpdate = () => {
+      refreshProfile();
+    };
+    window.addEventListener('medconnect:profile-updated', handleProfileUpdate);
+
     return () => {
       mounted = false;
       subscription.unsubscribe();
+      window.removeEventListener('medconnect:profile-updated', handleProfileUpdate);
     };
   }, [refreshProfile]);
 

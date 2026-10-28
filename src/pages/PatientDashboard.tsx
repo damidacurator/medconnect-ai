@@ -55,6 +55,7 @@ import {
   updateProfile,
   saveBMIRecord,
   deleteSymptomLog,
+  getPatientConsultations,
   type SymptomLogData,
   type VitalsData
 } from '@/lib/supabase';
@@ -258,12 +259,14 @@ export function PatientDashboard() {
   // Sync with consent access registry
   useEffect(() => {
     if (user?.id) {
+      const resolvedAge = profile?.age ?? (profile?.metadata as any)?.age ?? (typeof window !== 'undefined' ? localStorage.getItem(`medconnect_patient_age_${user.id}`) : null);
+      const resolvedGender = profile?.gender ?? (profile?.metadata as any)?.gender ?? (typeof window !== 'undefined' ? localStorage.getItem(`medconnect_patient_gender_${user.id}`) : null);
       registerOrUpdatePatientAccess({
         patientId: user.id,
         patientName: profile?.full_name || (user.user_metadata?.full_name as string) || 'Patient User',
         email: user.email || '',
-        gender: (profile?.metadata as any)?.gender,
-        age: (profile?.metadata as any)?.age,
+        gender: resolvedGender || undefined,
+        age: resolvedAge ? Number(resolvedAge) : undefined,
         bloodGroup: (profile?.metadata as any)?.blood_group,
         phone: profile?.phone,
       });
@@ -1365,6 +1368,93 @@ function RecordsSection({
   const [consultationRecords, setConsultationRecords] = useState<MedicalRecord[]>([]);
   const [prescriptions, setPrescriptions] = useState<PrescriptionItem[]>([]);
   const [labResults, setLabResults] = useState<LabResultItem[]>([]);
+
+  // Automatically load real EMR consultations, prescriptions, and lab orders from Cloud & Local storage
+  useEffect(() => {
+    let isMounted = true;
+    async function loadEMR() {
+      if (!patientId) return;
+      try {
+        const consults = await getPatientConsultations(patientId);
+        if (!isMounted) return;
+
+        if (Array.isArray(consults) && consults.length > 0) {
+          const mappedConsults: MedicalRecord[] = consults.map((c: any) => ({
+            id: c.emrCode || c.id,
+            doctorName: c.doctorName || 'Attending Physician',
+            specialty: 'Clinical Medicine',
+            institution: 'MedConnect Healthcare Network',
+            date: c.date || (c.created_at ? c.created_at.split('T')[0] : 'Recent'),
+            diagnosis: Array.isArray(c.diagnoses) ? c.diagnoses.join(', ') : (c.diagnoses || 'General Consultation'),
+            notes: c.treatmentPlan || c.chiefComplaint || 'Clinical notes recorded.',
+            prescriptionSummary: Array.isArray(c.prescriptions) && c.prescriptions.length > 0
+              ? c.prescriptions.map((p: any) => `${p.medication} (${p.dosage}, ${p.frequency})`).join('; ')
+              : undefined,
+            type: 'consultation' as const,
+          }));
+          setConsultationRecords(mappedConsults);
+
+          // Extract prescriptions
+          const allRx: PrescriptionItem[] = [];
+          consults.forEach((c: any) => {
+            if (Array.isArray(c.prescriptions)) {
+              c.prescriptions.forEach((p: any, idx: number) => {
+                allRx.push({
+                  id: p.id || `rx-${c.emrCode || c.id}-${idx}`,
+                  medication: p.medication,
+                  dosage: p.dosage || 'As directed',
+                  frequency: p.frequency || 'Daily',
+                  duration: p.duration || 'Standard course',
+                  datePrescribed: c.date || 'Recent',
+                  doctor: c.doctorName || 'Attending Physician',
+                  status: 'Active' as const,
+                  refillsLeft: 2,
+                });
+              });
+            }
+          });
+          if (allRx.length > 0) {
+            setPrescriptions(allRx);
+          }
+
+          // Extract lab results
+          const allLabs: LabResultItem[] = [];
+          consults.forEach((c: any) => {
+            if (Array.isArray(c.labOrders)) {
+              c.labOrders.forEach((l: any, idx: number) => {
+                allLabs.push({
+                  id: l.id || `lab-${c.emrCode || c.id}-${idx}`,
+                  testName: l.testName,
+                  category: l.category || 'Clinical Pathology',
+                  date: c.date || 'Recent',
+                  labName: 'MedConnect Central Lab',
+                  resultValue: 'Ordered by Doctor',
+                  referenceRange: 'Standard',
+                  status: 'Normal' as const,
+                });
+              });
+            }
+          });
+          if (allLabs.length > 0) {
+            setLabResults(allLabs);
+          }
+        }
+      } catch (err) {
+        console.warn('Error loading patient EMR in RecordsSection:', err);
+      }
+    }
+
+    loadEMR();
+
+    const handleUpdate = () => {
+      loadEMR();
+    };
+    window.addEventListener('medconnect:emr-updated', handleUpdate);
+    return () => {
+      isMounted = false;
+      window.removeEventListener('medconnect:emr-updated', handleUpdate);
+    };
+  }, [patientId]);
 
   const filteredConsultations = consultationRecords.filter(r =>
     r.doctorName.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -3537,7 +3627,12 @@ function ProfileSection({
   const [fullName, setFullName] = useState(
     profile?.full_name || (user?.user_metadata?.full_name as string) || (user?.email ? user.email.split('@')[0] : '')
   );
-  const [age, setAge] = useState(profile?.age?.toString() || '');
+  const [age, setAge] = useState(
+    profile?.age?.toString() ||
+    meta.age?.toString() ||
+    (typeof window !== 'undefined' ? localStorage.getItem(`medconnect_patient_age_${user?.id || ''}`) : '') ||
+    ''
+  );
   const [dateOfBirth, setDateOfBirth] = useState(meta.date_of_birth || '');
   const [gender, setGender] = useState(profile?.gender || 'prefer_not_to_say');
   const [maritalStatus, setMaritalStatus] = useState(meta.marital_status || 'Single');
@@ -3581,8 +3676,11 @@ function ProfileSection({
     e.preventDefault();
     setSaving(true);
 
+    const parsedAge = age ? parseInt(age, 10) : null;
     const fullMetadata = {
       ...meta,
+      age: parsedAge,
+      gender,
       date_of_birth: dateOfBirth,
       marital_status: maritalStatus,
       occupation,
@@ -3612,11 +3710,15 @@ function ProfileSection({
     try {
       await updateProfile(user?.id || '', {
         full_name: fullName,
-        age: age ? parseInt(age, 10) : null,
+        age: parsedAge,
         gender,
         phone,
         metadata: fullMetadata,
       });
+      if (user?.id) {
+        if (parsedAge !== null) localStorage.setItem(`medconnect_patient_age_${user.id}`, String(parsedAge));
+        if (gender) localStorage.setItem(`medconnect_patient_gender_${user.id}`, gender);
+      }
       onProfileUpdated();
       onShowToast('Biodata Saved to Cloud', 'Your complete medical and residential dossier has been persisted to Supabase.');
     } catch {
