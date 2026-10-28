@@ -417,6 +417,47 @@ export function DoctorDashboard() {
     setActiveTab('consultations');
   };
 
+  // Isolate and reset consultation records whenever target patient changes
+  useEffect(() => {
+    if (!selectedPatientForConsult) return;
+    setChiefComplaint('');
+    setHpi('');
+    setSelectedROS([]);
+    setExaminationFindings('');
+    setDiagnosisTags([]);
+    setDiagnosisInput('');
+    setDifferentialDiagnosis('');
+    setTreatmentPlan('');
+    setPrescriptions([]);
+    setLabOrders([]);
+    setFollowUpDate('');
+    setFollowUpNotes('');
+
+    // Pre-populate with this patient's vitals if available, otherwise clear
+    if (selectedPatientForConsult.vitalsHistory && selectedPatientForConsult.vitalsHistory.length > 0) {
+      const v = selectedPatientForConsult.vitalsHistory[0];
+      setVitalsInput({
+        bp: v.bp || '',
+        hr: v.hr ? String(v.hr) : '',
+        temp: v.temp ? String(v.temp) : '',
+        spo2: v.spo2 ? String(v.spo2) : '',
+        rr: '',
+        weight: v.weight ? String(v.weight) : '',
+        bmi: ''
+      });
+    } else {
+      setVitalsInput({
+        bp: '',
+        hr: '',
+        temp: '',
+        spo2: '',
+        rr: '',
+        weight: '',
+        bmi: ''
+      });
+    }
+  }, [selectedPatientForConsult?.id]);
+
   // Add prescription helper
   const handleAddPrescription = () => {
     const newItem: PrescriptionItem = {
@@ -881,7 +922,7 @@ export function DoctorDashboard() {
 
             {activeTab === 'consultations' && (
               <ConsultationFlowSection
-                key="consultations"
+                key={selectedPatientForConsult?.id || 'consultations-default'}
                 patients={patients}
                 step={consultationStep}
                 setStep={setConsultationStep}
@@ -926,7 +967,7 @@ export function DoctorDashboard() {
 
             {activeTab === 'records' && (
               <PatientRecordsSection
-                key="records"
+                key={selectedPatientForRecord?.id || 'records-default'}
                 patients={patients}
                 consultations={consultations}
                 selectedPatient={selectedPatientForRecord}
@@ -2146,12 +2187,36 @@ function PatientRecordsSection({
 }) {
   const [search, setSearch] = useState('');
   const [recordTab, setRecordTab] = useState<'timeline' | 'imaging'>('timeline');
-  const patient = selectedPatient || patients[0];
-  const [liveVitals, setLiveVitals] = useState<any[]>(patient?.vitalsHistory || []);
+  const [isDropdownOpen, setIsDropdownOpen] = useState(false);
+  const [isDirectoryOpen, setIsDirectoryOpen] = useState(false);
+  const dropdownRef = useRef<HTMLDivElement>(null);
 
+  const patient = selectedPatient || patients[0];
+  const [liveVitals, setLiveVitals] = useState<any[]>([]);
+  const [isLoadingVitals, setIsLoadingVitals] = useState<boolean>(false);
+
+  // Close dropdown on outside click
   useEffect(() => {
-    if (!patient?.id) return;
+    function handleClickOutside(event: MouseEvent) {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setIsDropdownOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  // Strict isolation of vitals per patient — never leak or retain previous patient's vitals
+  useEffect(() => {
+    // 1. Immediately reset vitals when switching to another patient
+    setLiveVitals([]);
+    if (!patient?.id) {
+      setIsLoadingVitals(false);
+      return;
+    }
+
     let isMounted = true;
+    setIsLoadingVitals(true);
 
     async function loadPatientVitals() {
       try {
@@ -2174,6 +2239,7 @@ function PatientRecordsSection({
             weight: r.weight_kg ? Number(r.weight_kg) : undefined,
           }));
           setLiveVitals(formatted);
+          setIsLoadingVitals(false);
           return;
         }
 
@@ -2187,15 +2253,18 @@ function PatientRecordsSection({
         const metaHistory = (pProfile?.metadata as any)?.vitals_history;
         if (isMounted && Array.isArray(metaHistory) && metaHistory.length > 0) {
           setLiveVitals(metaHistory);
+          setIsLoadingVitals(false);
           return;
         }
 
         // 3. Fallback to patient's cached vitalsHistory from unlock PIN
         if (isMounted && patient?.vitalsHistory && patient.vitalsHistory.length > 0) {
           setLiveVitals(patient.vitalsHistory);
+          setIsLoadingVitals(false);
           return;
         }
 
+        // 4. Local storage fallback for this specific patient
         const localKey = 'medconnect_health_vitals';
         const raw = localStorage.getItem(localKey);
         if (raw && isMounted) {
@@ -2212,16 +2281,27 @@ function PatientRecordsSection({
               weight: r.weight_kg ? Number(r.weight_kg) : undefined,
             }));
             setLiveVitals(formatted);
+            setIsLoadingVitals(false);
             return;
           }
         }
+
+        // 5. CRITICAL: If no vitals found for this specific patient, explicitly clear!
+        if (isMounted) {
+          setLiveVitals([]);
+          setIsLoadingVitals(false);
+        }
       } catch (err) {
         console.warn('Error loading patient vitals in doctor EMR:', err);
+        if (isMounted) {
+          setLiveVitals([]);
+          setIsLoadingVitals(false);
+        }
       }
     }
 
     loadPatientVitals();
-    const interval = setInterval(loadPatientVitals, 2000);
+    const interval = setInterval(loadPatientVitals, 3000);
 
     // Supabase realtime channel for instant event push
     const channel = supabase
@@ -2244,49 +2324,215 @@ function PatientRecordsSection({
 
   const patientConsultations = consultations.filter(c => c.patientId === patient?.id);
 
+  // Pagination / index stepper for rapid clinical review through 20-50+ patients
+  const currentIndex = patients.findIndex(p => p.id === patient?.id);
+  const prevPatient = currentIndex > 0 ? patients[currentIndex - 1] : null;
+  const nextPatient = currentIndex >= 0 && currentIndex < patients.length - 1 ? patients[currentIndex + 1] : null;
+
+  const filteredPatients = patients.filter(
+    p =>
+      p.name.toLowerCase().includes(search.toLowerCase()) ||
+      p.pid.toLowerCase().includes(search.toLowerCase()) ||
+      (p.bloodGroup && p.bloodGroup.toLowerCase().includes(search.toLowerCase()))
+  );
+
   return (
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6">
-      {/* Patient Selector Bar */}
-      <div className="p-4 rounded-2xl bg-white/[0.03] border border-white/10 backdrop-blur-md flex flex-col sm:flex-row items-center justify-between gap-4">
-        <div className="flex items-center gap-3 w-full sm:w-auto flex-1">
-          <div className="relative w-full sm:w-80">
-            <Search className="w-4 h-4 absolute left-3 top-3 text-slate-400" />
-            <input
-              type="text"
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-              placeholder="Search unlocked patients..."
-              className="w-full pl-9 pr-3 py-2 rounded-xl bg-white/5 border border-white/10 text-white placeholder-slate-500 text-xs focus:outline-none focus:border-teal-500"
-            />
+      {/* Scalable Patient Selector Toolbar for 20-50+ Patients */}
+      <div className="p-4 rounded-2xl bg-white/[0.03] border border-white/10 backdrop-blur-md space-y-3">
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+          {/* Active Patient Dropdown & Stepper */}
+          <div className="flex flex-wrap items-center gap-2 flex-1">
+            {/* Quick Step Buttons for rapid queue review */}
+            <div className="flex items-center gap-1 bg-white/5 border border-white/10 p-1 rounded-xl shrink-0">
+              <button
+                type="button"
+                disabled={!prevPatient}
+                onClick={() => prevPatient && onSelectPatient(prevPatient)}
+                className="p-1.5 rounded-lg text-slate-300 hover:text-white hover:bg-white/10 disabled:opacity-30 disabled:hover:bg-transparent transition cursor-pointer"
+                title={prevPatient ? `Previous: ${prevPatient.name}` : 'No previous patient'}
+              >
+                <ChevronLeft className="w-4 h-4" />
+              </button>
+              <span className="text-[11px] font-mono text-slate-400 px-2 select-none">
+                {patients.length > 0 ? `${currentIndex + 1} / ${patients.length}` : '0 / 0'}
+              </span>
+              <button
+                type="button"
+                disabled={!nextPatient}
+                onClick={() => nextPatient && onSelectPatient(nextPatient)}
+                className="p-1.5 rounded-lg text-slate-300 hover:text-white hover:bg-white/10 disabled:opacity-30 disabled:hover:bg-transparent transition cursor-pointer"
+                title={nextPatient ? `Next: ${nextPatient.name}` : 'No next patient'}
+              >
+                <ChevronRight className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Dropdown Selector Combobox */}
+            <div className="relative flex-1 min-w-[220px]" ref={dropdownRef}>
+              <button
+                type="button"
+                onClick={() => setIsDropdownOpen(prev => !prev)}
+                className="w-full px-3 py-2 rounded-xl bg-white/5 border border-white/10 hover:border-teal-500/40 text-left transition flex items-center justify-between gap-2 cursor-pointer"
+              >
+                {patient ? (
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <div className="w-7 h-7 rounded-lg bg-teal-500/20 text-teal-300 font-bold text-xs flex items-center justify-center shrink-0">
+                      {patient.name.charAt(0)}
+                    </div>
+                    <div className="min-w-0 truncate">
+                      <span className="text-xs font-bold text-white mr-2">{patient.name}</span>
+                      <span className="text-[10px] font-mono text-teal-300 px-1.5 py-0.5 rounded bg-teal-500/10 border border-teal-500/20">
+                        {patient.pid}
+                      </span>
+                    </div>
+                  </div>
+                ) : (
+                  <span className="text-xs text-slate-400">Select a patient chart...</span>
+                )}
+                <ChevronDown className={cn('w-4 h-4 text-slate-400 transition-transform shrink-0', isDropdownOpen && 'rotate-180')} />
+              </button>
+
+              {/* Dropdown Panel with Search */}
+              {isDropdownOpen && (
+                <div className="absolute left-0 right-0 top-full mt-2 z-50 rounded-2xl bg-slate-950 border border-slate-800 shadow-2xl p-2 space-y-2 max-h-80 flex flex-col">
+                  <div className="relative shrink-0">
+                    <Search className="w-3.5 h-3.5 absolute left-3 top-2.5 text-slate-400" />
+                    <input
+                      type="text"
+                      autoFocus
+                      value={search}
+                      onChange={e => setSearch(e.target.value)}
+                      placeholder="Filter by name or PID..."
+                      className="w-full pl-8 pr-3 py-1.5 rounded-lg bg-slate-900 border border-slate-700 text-xs text-white placeholder-slate-500 outline-none focus:border-teal-400"
+                    />
+                  </div>
+
+                  <div className="overflow-y-auto space-y-1 flex-1 pr-1">
+                    {filteredPatients.length > 0 ? (
+                      filteredPatients.map(p => (
+                        <button
+                          key={p.id}
+                          type="button"
+                          onClick={() => {
+                            onSelectPatient(p);
+                            setIsDropdownOpen(false);
+                            setSearch('');
+                          }}
+                          className={cn(
+                            'w-full p-2.5 rounded-xl text-left transition flex items-center justify-between gap-2 cursor-pointer',
+                            p.id === patient?.id
+                              ? 'bg-teal-500/20 border border-teal-500/40 text-teal-200'
+                              : 'hover:bg-slate-900 text-slate-300'
+                          )}
+                        >
+                          <div className="flex items-center gap-2 min-w-0">
+                            <div className="w-6 h-6 rounded-md bg-teal-500/20 text-teal-300 font-bold text-[11px] flex items-center justify-center shrink-0">
+                              {p.name.charAt(0)}
+                            </div>
+                            <div className="min-w-0">
+                              <p className="text-xs font-semibold text-white truncate">{p.name}</p>
+                              <p className="text-[10px] text-slate-400 font-mono">
+                                {p.pid} • {p.age}y {p.gender}
+                              </p>
+                            </div>
+                          </div>
+                          {p.bloodGroup && (
+                            <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 shrink-0">
+                              {p.bloodGroup}
+                            </span>
+                          )}
+                        </button>
+                      ))
+                    ) : (
+                      <p className="text-center text-xs text-slate-500 py-4">No matching patients found.</p>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Open Full Patient Directory Modal / Roster View */}
+            <button
+              type="button"
+              onClick={() => setIsDirectoryOpen(prev => !prev)}
+              className={cn(
+                'px-3.5 py-2 rounded-xl border text-xs font-semibold flex items-center gap-1.5 shrink-0 transition cursor-pointer',
+                isDirectoryOpen
+                  ? 'bg-teal-500 text-slate-950 border-teal-400 font-bold shadow'
+                  : 'bg-white/5 border-white/10 text-slate-300 hover:bg-white/10 hover:text-white'
+              )}
+            >
+              <Users className="w-3.5 h-3.5" />
+              <span>Patient Directory ({patients.length})</span>
+            </button>
           </div>
 
+          {/* Unlock via PID button */}
           <button
             onClick={onOpenUnlockModal}
-            className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-teal-500 to-cyan-500 text-slate-950 font-bold text-xs flex items-center gap-1.5 shrink-0 hover:brightness-110 transition shadow-sm shadow-teal-500/20"
+            className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-teal-500 to-cyan-500 text-slate-950 font-bold text-xs flex items-center justify-center gap-1.5 shrink-0 hover:brightness-110 transition shadow-sm shadow-teal-500/20 cursor-pointer"
           >
             <Key className="w-3.5 h-3.5" />
-            <span>Unlock Patient via Patient ID</span>
+            <span>Unlock Patient via PID</span>
           </button>
         </div>
 
-        <div className="flex items-center gap-2 overflow-x-auto w-full sm:w-auto">
-          {patients
-            .filter(p => p.name.toLowerCase().includes(search.toLowerCase()) || p.pid.toLowerCase().includes(search.toLowerCase()))
-            .map(p => (
-              <button
-                key={p.id}
-                onClick={() => onSelectPatient(p)}
-                className={cn(
-                  'px-3 py-1.5 rounded-xl text-xs font-medium shrink-0 transition',
-                  p.id === patient?.id
-                    ? 'bg-teal-500 text-slate-950 font-bold'
-                    : 'bg-white/5 text-slate-300 hover:bg-white/10'
-                )}
-              >
-                {p.name}
-              </button>
-            ))}
-        </div>
+        {/* Collapsible Full Patient Directory Roster Grid (Handles 20 to 100+ patients smoothly) */}
+        {isDirectoryOpen && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+            exit={{ opacity: 0, height: 0 }}
+            className="pt-3 border-t border-white/10 space-y-3"
+          >
+            <div className="flex items-center justify-between text-xs">
+              <span className="font-semibold text-white flex items-center gap-1.5">
+                <Users className="w-4 h-4 text-teal-400" />
+                Unlocked Patient Directory ({patients.length} total)
+              </span>
+              <span className="text-[11px] text-slate-400">
+                Click any patient card to immediately isolate and switch their chart
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2.5 max-h-72 overflow-y-auto pr-1">
+              {patients.map(p => (
+                <div
+                  key={p.id}
+                  onClick={() => {
+                    onSelectPatient(p);
+                    setIsDirectoryOpen(false);
+                  }}
+                  className={cn(
+                    'p-3 rounded-xl border transition cursor-pointer flex items-center justify-between gap-2.5',
+                    p.id === patient?.id
+                      ? 'bg-teal-500/20 border-teal-500/50 shadow-md shadow-teal-500/10 ring-1 ring-teal-400/30'
+                      : 'bg-white/[0.02] border-white/5 hover:bg-white/5 hover:border-white/20'
+                  )}
+                >
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <div className="w-8 h-8 rounded-lg bg-teal-500/20 text-teal-300 font-bold text-xs flex items-center justify-center shrink-0">
+                      {p.name.charAt(0)}
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-xs font-bold text-white truncate">{p.name}</p>
+                      <p className="text-[10px] text-teal-300 font-mono truncate">{p.pid}</p>
+                      <p className="text-[10px] text-slate-400">
+                        {p.age}y • {p.gender} • {p.bloodGroup || 'Blood: N/A'}
+                      </p>
+                    </div>
+                  </div>
+                  {p.id === patient?.id && (
+                    <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-teal-500 text-slate-950 shrink-0">
+                      Active
+                    </span>
+                  )}
+                </div>
+              ))}
+            </div>
+          </motion.div>
+        )}
       </div>
 
       {patients.length === 0 ? (
@@ -2309,168 +2555,214 @@ function PatientRecordsSection({
           </button>
         </div>
       ) : patient ? (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Patient Card Left Side */}
-          <div className="space-y-6">
-            <div className="p-5 rounded-2xl bg-white/[0.03] border border-white/10 backdrop-blur-md">
-              <div className="flex items-center gap-4 mb-4">
-                <div className="w-14 h-14 rounded-2xl bg-teal-500/20 border border-teal-500/30 flex items-center justify-center text-teal-300 font-extrabold text-xl">
-                  {patient.name.charAt(0)}
-                </div>
-                <div>
-                  <h3 className="font-bold text-lg text-white">{patient.name}</h3>
-                  <span className="font-mono text-xs text-teal-400 px-2 py-0.5 rounded bg-teal-500/10 border border-teal-500/20">
-                    {patient.pid}
-                  </span>
-                </div>
-              </div>
-
-              <div className="space-y-2.5 text-xs">
-                <div className="flex justify-between py-1 border-b border-white/5">
-                  <span className="text-slate-400">Demographics</span>
-                  <span className="text-slate-200">{patient.age} yrs • {patient.gender}</span>
-                </div>
-                <div className="flex justify-between py-1 border-b border-white/5">
-                  <span className="text-slate-400">Blood Group</span>
-                  <span className="text-teal-300 font-semibold">{patient.bloodGroup}</span>
-                </div>
-                <div className="flex justify-between py-1 border-b border-white/5">
-                  <span className="text-slate-400">Phone</span>
-                  <span className="text-slate-200">{patient.phone}</span>
-                </div>
-                <div className="flex justify-between py-1 border-b border-white/5">
-                  <span className="text-slate-400">Email</span>
-                  <span className="text-slate-200 truncate max-w-[170px]">{patient.email}</span>
-                </div>
-                <div className="flex justify-between py-1 border-b border-white/5">
-                  <span className="text-slate-400">Last Consultation</span>
-                  <span className="text-slate-200">{patient.lastVisit || 'N/A'}</span>
-                </div>
-              </div>
-
-              {/* Allergies */}
-              <div className="mt-5">
-                <h4 className="text-xs font-semibold text-rose-300 mb-2 flex items-center gap-1.5">
-                  <AlertTriangle className="w-3.5 h-3.5" /> Documented Allergies
-                </h4>
-                <div className="flex flex-wrap gap-2">
-                  {patient.allergies.length > 0 ? (
-                    patient.allergies.map((alg, i) => (
-                      <span
-                        key={i}
-                        className={cn(
-                          'px-2.5 py-1 rounded-lg text-[11px] font-medium border',
-                          alg.severity === 'Critical'
-                            ? 'bg-rose-500/20 text-rose-300 border-rose-500/30'
-                            : 'bg-amber-500/20 text-amber-300 border-amber-500/30'
-                        )}
-                      >
-                        {alg.name} ({alg.severity})
-                      </span>
-                    ))
-                  ) : (
-                    <span className="text-xs text-slate-500">No known drug allergies (NKDA)</span>
-                  )}
-                </div>
-              </div>
-
-              {/* Chronic Conditions */}
-              <div className="mt-5">
-                <h4 className="text-xs font-semibold text-slate-300 mb-2">Chronic Conditions</h4>
-                <div className="flex flex-wrap gap-2">
-                  {patient.chronicConditions.map((cond, i) => (
-                    <span key={i} className="px-2.5 py-1 rounded-lg bg-white/5 border border-white/10 text-slate-300 text-[11px]">
-                      {cond}
-                    </span>
-                  ))}
-                </div>
+        <div className="space-y-4">
+          {/* Active Patient Safety & Isolation Verification Banner (Prevents doctor clinical confusion) */}
+          <div className="p-3.5 rounded-2xl bg-gradient-to-r from-teal-950/70 via-slate-900 to-slate-950 border border-teal-500/30 flex flex-wrap items-center justify-between gap-3 text-xs shadow-lg shadow-teal-500/5">
+            <div className="flex items-center gap-3">
+              <div className="w-3 h-3 rounded-full bg-emerald-400 animate-pulse shrink-0" />
+              <div>
+                <span className="text-[11px] uppercase tracking-wider text-teal-400 font-bold mr-2">
+                  Verified Active Chart:
+                </span>
+                <span className="text-sm font-extrabold text-white mr-2">{patient.name}</span>
+                <span className="font-mono text-xs text-cyan-300 px-2 py-0.5 rounded bg-cyan-500/10 border border-cyan-500/20 font-bold">
+                  {patient.pid}
+                </span>
               </div>
             </div>
 
-            {/* Vitals History */}
-            <div className="p-5 rounded-2xl bg-white/[0.03] border border-white/10 backdrop-blur-md">
-              <div className="flex items-center justify-between mb-3">
-                <h4 className="text-xs font-semibold text-white flex items-center gap-2">
-                  <Activity className="w-4 h-4 text-teal-400" /> Vitals History
-                </h4>
-                <span className="text-[10px] font-mono text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-full flex items-center gap-1.5">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                  Live Sync
-                </span>
-              </div>
-              <div className="space-y-3">
-                {liveVitals.length > 0 ? (
-                  liveVitals.map((vh, i) => (
-                    <div key={i} className="p-3 rounded-xl bg-white/[0.02] border border-white/5 text-xs">
-                      <div className="flex justify-between text-slate-400 mb-1.5 font-mono text-[11px]">
-                        <span>{vh.date}</span>
-                        <span className="text-teal-300 font-semibold">BP {vh.bp}</span>
-                      </div>
-                      <div className="grid grid-cols-3 gap-2 text-[11px] text-slate-300">
-                        <span>HR: {vh.hr} bpm</span>
-                        <span>Temp: {vh.temp}°C</span>
-                        <span>SpO2: {vh.spo2}%</span>
-                      </div>
-                      {(vh.glucose || vh.weight) && (
-                        <div className="flex gap-3 text-[11px] text-slate-400 mt-1 pt-1 border-t border-white/5 font-mono">
-                          {vh.glucose && <span>Glucose: {vh.glucose} mg/dL</span>}
-                          {vh.weight && <span>Weight: {vh.weight} kg</span>}
-                        </div>
-                      )}
-                    </div>
-                  ))
-                ) : (
-                  <div className="p-4 rounded-xl bg-white/[0.01] border border-white/5 text-center space-y-1">
-                    <p className="text-xs text-slate-300 font-medium">No vitals readings logged yet.</p>
-                    <p className="text-[11px] text-slate-500 leading-relaxed">
-                      As soon as the patient records biometric vitals on their passport, they will synchronize and display here automatically.
-                    </p>
-                  </div>
-                )}
-              </div>
+            <div className="flex flex-wrap items-center gap-3 text-[11px] text-slate-300">
+              <span>{patient.age} yrs • {patient.gender}</span>
+              <span className="text-slate-600">|</span>
+              <span>Blood Group: <strong className="text-teal-300">{patient.bloodGroup}</strong></span>
+              <span className="text-slate-600">|</span>
+              <span className="text-emerald-400 font-semibold flex items-center gap-1">
+                <CheckCircle2 className="w-3.5 h-3.5" />
+                Strict Chart Isolation Active
+              </span>
             </div>
           </div>
 
-          {/* EMR Consultations Timeline & Diagnostic Imaging Right Side */}
-          <div className="lg:col-span-2 space-y-6">
-            <div className="p-5 rounded-2xl bg-white/[0.03] border border-white/10 backdrop-blur-md">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6 pb-4 border-b border-white/10">
-                <div>
-                  <h3 className="text-base font-bold text-white mb-0.5">Clinical Chart & Diagnostics</h3>
-                  <p className="text-xs text-slate-400">Consultation history, diagnoses, and diagnostic radiology scans</p>
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            {/* Patient Card Left Side */}
+            <div className="space-y-6">
+              <div className="p-5 rounded-2xl bg-white/[0.03] border border-white/10 backdrop-blur-md">
+                <div className="flex items-center gap-4 mb-4">
+                  <div className="w-14 h-14 rounded-2xl bg-teal-500/20 border border-teal-500/30 flex items-center justify-center text-teal-300 font-extrabold text-xl">
+                    {patient.name.charAt(0)}
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-lg text-white">{patient.name}</h3>
+                    <span className="font-mono text-xs text-teal-400 px-2 py-0.5 rounded bg-teal-500/10 border border-teal-500/20">
+                      {patient.pid}
+                    </span>
+                  </div>
                 </div>
 
-                <div className="flex items-center gap-2 p-1 rounded-xl bg-white/5 border border-white/10 self-start sm:self-auto">
-                  <button
-                    onClick={() => setRecordTab('timeline')}
-                    className={cn(
-                      'px-3 py-1.5 rounded-lg text-xs font-semibold transition',
-                      recordTab === 'timeline' ? 'bg-teal-500 text-slate-950 shadow' : 'text-slate-400 hover:text-white'
+                <div className="space-y-2.5 text-xs">
+                  <div className="flex justify-between py-1 border-b border-white/5">
+                    <span className="text-slate-400">Demographics</span>
+                    <span className="text-slate-200">{patient.age} yrs • {patient.gender}</span>
+                  </div>
+                  <div className="flex justify-between py-1 border-b border-white/5">
+                    <span className="text-slate-400">Blood Group</span>
+                    <span className="text-teal-300 font-semibold">{patient.bloodGroup}</span>
+                  </div>
+                  <div className="flex justify-between py-1 border-b border-white/5">
+                    <span className="text-slate-400">Phone</span>
+                    <span className="text-slate-200">{patient.phone || 'Not registered'}</span>
+                  </div>
+                  <div className="flex justify-between py-1 border-b border-white/5">
+                    <span className="text-slate-400">Email</span>
+                    <span className="text-slate-200 truncate max-w-[170px]">{patient.email || 'Not registered'}</span>
+                  </div>
+                  <div className="flex justify-between py-1 border-b border-white/5">
+                    <span className="text-slate-400">Last Consultation</span>
+                    <span className="text-slate-200">{patient.lastVisit || 'Today'}</span>
+                  </div>
+                </div>
+
+                {/* Allergies */}
+                <div className="mt-5">
+                  <h4 className="text-xs font-semibold text-rose-300 mb-2 flex items-center gap-1.5">
+                    <AlertTriangle className="w-3.5 h-3.5" /> Documented Allergies
+                  </h4>
+                  <div className="flex flex-wrap gap-2">
+                    {patient.allergies && patient.allergies.length > 0 ? (
+                      patient.allergies.map((alg, i) => (
+                        <span
+                          key={i}
+                          className={cn(
+                            'px-2.5 py-1 rounded-lg text-[11px] font-medium border',
+                            alg.severity === 'Critical'
+                              ? 'bg-rose-500/20 text-rose-300 border-rose-500/30'
+                              : 'bg-amber-500/20 text-amber-300 border-amber-500/30'
+                          )}
+                        >
+                          {alg.name} ({alg.severity})
+                        </span>
+                      ))
+                    ) : (
+                      <span className="text-xs text-slate-500">No known drug allergies (NKDA)</span>
                     )}
-                  >
-                    EMR Timeline
-                  </button>
-                  <button
-                    onClick={() => setRecordTab('imaging')}
-                    className={cn(
-                      'px-3 py-1.5 rounded-lg text-xs font-semibold transition flex items-center gap-1.5',
-                      recordTab === 'imaging' ? 'bg-teal-500 text-slate-950 shadow' : 'text-slate-400 hover:text-white'
+                  </div>
+                </div>
+
+                {/* Chronic Conditions */}
+                <div className="mt-5">
+                  <h4 className="text-xs font-semibold text-slate-300 mb-2">Chronic Conditions</h4>
+                  <div className="flex flex-wrap gap-2">
+                    {patient.chronicConditions && patient.chronicConditions.length > 0 ? (
+                      patient.chronicConditions.map((cond, i) => (
+                        <span key={i} className="px-2.5 py-1 rounded-lg bg-white/5 border border-white/10 text-slate-300 text-[11px]">
+                          {cond}
+                        </span>
+                      ))
+                    ) : (
+                      <span className="text-xs text-slate-500">No chronic illnesses on file</span>
                     )}
-                  >
-                    <Eye className="w-3.5 h-3.5" />
-                    <span>CT / X-Ray / Scans</span>
-                  </button>
+                  </div>
                 </div>
               </div>
 
-              {recordTab === 'imaging' ? (
-                <DiagnosticImagingVault
-                  patientId={patient.id}
-                  patientName={patient.name}
-                  isDoctorView={true}
-                  onShowToast={(t, d) => showToast(`${t}${d ? ': ' + d : ''}`)}
-                />
-              ) : (
+              {/* Vitals History with Strict Patient Isolation */}
+              <div className="p-5 rounded-2xl bg-white/[0.03] border border-white/10 backdrop-blur-md">
+                <div className="flex items-center justify-between mb-3">
+                  <h4 className="text-xs font-semibold text-white flex items-center gap-2">
+                    <Activity className="w-4 h-4 text-teal-400" />
+                    <span>Vitals History ({patient.name})</span>
+                  </h4>
+                  {isLoadingVitals ? (
+                    <span className="text-[10px] font-mono text-cyan-400 flex items-center gap-1">
+                      <RefreshCw className="w-3 h-3 animate-spin" /> Syncing...
+                    </span>
+                  ) : (
+                    <span className="text-[10px] font-mono text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-full flex items-center gap-1.5">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                      Live Sync
+                    </span>
+                  )}
+                </div>
+
+                <div className="space-y-3">
+                  {isLoadingVitals && liveVitals.length === 0 ? (
+                    <div className="p-6 rounded-xl bg-white/[0.01] border border-white/5 text-center space-y-2">
+                      <RefreshCw className="w-5 h-5 text-teal-400 animate-spin mx-auto" />
+                      <p className="text-xs text-slate-400">Loading {patient.name}'s vitals...</p>
+                    </div>
+                  ) : liveVitals.length > 0 ? (
+                    liveVitals.map((vh, i) => (
+                      <div key={i} className="p-3 rounded-xl bg-white/[0.02] border border-white/5 text-xs">
+                        <div className="flex justify-between text-slate-400 mb-1.5 font-mono text-[11px]">
+                          <span>{vh.date}</span>
+                          <span className="text-teal-300 font-semibold">BP {vh.bp}</span>
+                        </div>
+                        <div className="grid grid-cols-3 gap-2 text-[11px] text-slate-300">
+                          <span>HR: {vh.hr} bpm</span>
+                          <span>Temp: {vh.temp}°C</span>
+                          <span>SpO2: {vh.spo2}%</span>
+                        </div>
+                        {(vh.glucose || vh.weight) && (
+                          <div className="flex gap-3 text-[11px] text-slate-400 mt-1 pt-1 border-t border-white/5 font-mono">
+                            {vh.glucose && <span>Glucose: {vh.glucose} mg/dL</span>}
+                            {vh.weight && <span>Weight: {vh.weight} kg</span>}
+                          </div>
+                        )}
+                      </div>
+                    ))
+                  ) : (
+                    <div className="p-4 rounded-xl bg-white/[0.01] border border-white/5 text-center space-y-1">
+                      <p className="text-xs text-slate-300 font-medium">No vitals readings logged yet for {patient.name}.</p>
+                      <p className="text-[11px] text-slate-500 leading-relaxed">
+                        When this patient records biometric vitals, they will instantly synchronize and appear here.
+                      </p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* EMR Consultations Timeline & Diagnostic Imaging Right Side */}
+            <div className="lg:col-span-2 space-y-6">
+              <div className="p-5 rounded-2xl bg-white/[0.03] border border-white/10 backdrop-blur-md">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6 pb-4 border-b border-white/10">
+                  <div>
+                    <h3 className="text-base font-bold text-white mb-0.5">Clinical Chart & Diagnostics</h3>
+                    <p className="text-xs text-slate-400">Consultation history, diagnoses, and diagnostic radiology scans for {patient.name}</p>
+                  </div>
+
+                  <div className="flex items-center gap-2 p-1 rounded-xl bg-white/5 border border-white/10 self-start sm:self-auto">
+                    <button
+                      onClick={() => setRecordTab('timeline')}
+                      className={cn(
+                        'px-3 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer',
+                        recordTab === 'timeline' ? 'bg-teal-500 text-slate-950 shadow font-bold' : 'text-slate-400 hover:text-white'
+                      )}
+                    >
+                      EMR Timeline
+                    </button>
+                    <button
+                      onClick={() => setRecordTab('imaging')}
+                      className={cn(
+                        'px-3 py-1.5 rounded-lg text-xs font-semibold transition flex items-center gap-1.5 cursor-pointer',
+                        recordTab === 'imaging' ? 'bg-teal-500 text-slate-950 shadow font-bold' : 'text-slate-400 hover:text-white'
+                      )}
+                    >
+                      <Eye className="w-3.5 h-3.5" />
+                      <span>CT / X-Ray / Scans</span>
+                    </button>
+                  </div>
+                </div>
+
+                {recordTab === 'imaging' ? (
+                  <DiagnosticImagingVault
+                    key={patient.id}
+                    patientId={patient.id}
+                    patientName={patient.name}
+                    isDoctorView={true}
+                    onShowToast={(t, d) => showToast(`${t}${d ? ': ' + d : ''}`)}
+                  />
+                ) : (
                 <div className="space-y-6 relative before:absolute before:left-3 before:top-2 before:bottom-2 before:w-0.5 before:bg-white/10">
                   {patientConsultations.length > 0 ? (
                     patientConsultations.map(consult => (
@@ -2525,7 +2817,7 @@ function PatientRecordsSection({
                     ))
                   ) : (
                     <div className="p-8 text-center text-slate-500 text-xs">
-                      No past consultation records on file for this patient.
+                      No past consultation records on file for {patient.name}.
                     </div>
                   )}
                 </div>
@@ -2533,9 +2825,10 @@ function PatientRecordsSection({
             </div>
           </div>
         </div>
-      ) : null}
-    </motion.div>
-  );
+      </div>
+    ) : null}
+  </motion.div>
+);
 }
 
 // ----------------------------------------------------------------------
