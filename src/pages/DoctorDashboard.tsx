@@ -53,7 +53,7 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/useAuth';
-import { supabase } from '@/lib/supabase';
+import { supabase, getSymptomHistory } from '@/lib/supabase';
 import { DiagnosticImagingVault } from '@/components/medical/DiagnosticImagingVault';
 import { unlockPatientWithPin, fetchDoctorUnlockedPatients } from '@/lib/accessControl';
 import { fetchMessages, sendChatMessage, getUnreadMessagesCount, markMessagesAsRead, type ChatMessage } from '@/lib/messaging';
@@ -169,7 +169,7 @@ export function DoctorDashboard() {
 
   // State
   const [activeTab, setActiveTab] = useState<string>('overview');
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sidebarOpen, setSidebarOpen] = useState(() => typeof window !== 'undefined' ? window.innerWidth >= 768 : true);
   const [patients, setPatients] = useState<Patient[]>(() => {
     try {
       const docId = user?.id || 'doc-1';
@@ -349,7 +349,18 @@ export function DoctorDashboard() {
     const loadMsgs = async () => {
       try {
         const msgs = await fetchMessages(user.id, selectedChatPatientId, user.id);
-        if (isMounted) setCurrentChatMessages(msgs);
+        if (isMounted) {
+          setCurrentChatMessages(prev => {
+            if (
+              prev.length === msgs.length &&
+              prev.length > 0 &&
+              prev[prev.length - 1]?.id === msgs[msgs.length - 1]?.id
+            ) {
+              return prev;
+            }
+            return msgs;
+          });
+        }
         await markMessagesAsRead(selectedChatPatientId, user.id);
         setUnreadMessagesCount(prev => Math.max(0, prev - 1));
       } catch (err) {
@@ -733,8 +744,8 @@ export function DoctorDashboard() {
       {/* Sidebar */}
       <aside
         className={cn(
-          'relative flex flex-col border-r border-white/10 bg-[#0d1527]/80 backdrop-blur-xl transition-all duration-300 z-20',
-          sidebarOpen ? 'w-64' : 'w-20'
+          'fixed inset-y-0 left-0 z-50 flex flex-col border-r border-white/10 bg-[#0d1527] md:bg-[#0d1527]/80 backdrop-blur-xl transition-all duration-300 md:static',
+          sidebarOpen ? 'w-64 translate-x-0 shadow-2xl md:shadow-none' : '-translate-x-full md:translate-x-0 md:w-20'
         )}
       >
         {/* Sidebar Brand & Doctor Code */}
@@ -781,7 +792,12 @@ export function DoctorDashboard() {
             return (
               <button
                 key={item.id}
-                onClick={() => setActiveTab(item.id)}
+                onClick={() => {
+                  setActiveTab(item.id);
+                  if (typeof window !== 'undefined' && window.innerWidth < 768) {
+                    setSidebarOpen(false);
+                  }
+                }}
                 className={cn(
                   'w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all group relative',
                   isActive
@@ -825,30 +841,51 @@ export function DoctorDashboard() {
         </div>
       </aside>
 
+      {/* Mobile Sidebar Backdrop */}
+      {sidebarOpen && (
+        <div
+          onClick={() => setSidebarOpen(false)}
+          className="fixed inset-0 z-40 bg-black/70 backdrop-blur-sm md:hidden"
+        />
+      )}
+
       {/* Main Content Area */}
       <main className="flex-1 flex flex-col h-full overflow-hidden bg-gradient-to-b from-[#0d1629] to-[#080d19]">
         {/* Top Header */}
-        <header className="h-16 px-6 border-b border-white/10 flex items-center justify-between bg-white/[0.02] backdrop-blur-md shrink-0">
-          <div className="flex items-center gap-3">
-            <h2 className="text-lg font-semibold text-slate-100 capitalize">
+        <header className="h-14 sm:h-16 px-3 sm:px-6 border-b border-white/10 flex items-center justify-between bg-white/[0.02] backdrop-blur-md shrink-0">
+          <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+            <button
+              type="button"
+              onClick={() => setSidebarOpen(true)}
+              className="md:hidden p-1.5 sm:p-2 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white transition shrink-0"
+              title="Open Navigation Menu"
+            >
+              <Menu className="w-5 h-5" />
+            </button>
+            <h2 className="text-sm sm:text-lg font-semibold text-slate-100 capitalize truncate">
               {navItems.find(n => n.id === activeTab)?.label || 'Doctor Dashboard'}
             </h2>
-            <span className="hidden sm:inline-block px-2.5 py-0.5 text-xs font-mono rounded-md bg-teal-500/10 text-teal-300 border border-teal-500/20">
+            <span className="hidden lg:inline-block px-2.5 py-0.5 text-xs font-mono rounded-md bg-teal-500/10 text-teal-300 border border-teal-500/20">
               License Verified
             </span>
-            <span className="px-2.5 py-0.5 text-[10px] font-mono rounded-full bg-teal-500/10 text-teal-300 border border-teal-500/30 flex items-center gap-1.5">
+            <span className="hidden sm:flex px-2 py-0.5 text-[10px] font-mono rounded-full bg-teal-500/10 text-teal-300 border border-teal-500/30 items-center gap-1.5 shrink-0">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
               v1.2.0 • Live Sync
             </span>
+            <span className="sm:hidden flex items-center gap-1 text-[10px] font-mono text-teal-300 bg-teal-500/10 px-1.5 py-0.5 rounded-full border border-teal-500/20 shrink-0">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+              Live
+            </span>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-1.5 sm:gap-3 shrink-0">
             <button
               onClick={() => setIsUnlockModalOpen(true)}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 font-semibold text-xs transition cursor-pointer"
+              className="flex items-center gap-1 sm:gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 font-semibold text-xs transition cursor-pointer"
             >
               <Key className="w-3.5 h-3.5" />
-              <span>Access Patient via ID</span>
+              <span className="hidden sm:inline">Access Patient via ID</span>
+              <span className="sm:hidden">PID</span>
             </button>
 
             <button
@@ -862,10 +899,11 @@ export function DoctorDashboard() {
                 setConsultationStep(1);
                 setActiveTab('consultations');
               }}
-              className="flex items-center gap-2 px-3.5 py-1.5 rounded-lg bg-gradient-to-r from-teal-500 to-cyan-500 text-slate-950 font-semibold text-xs shadow-md shadow-teal-500/20 hover:brightness-110 transition"
+              className="flex items-center gap-1.5 px-2.5 sm:px-3.5 py-1.5 rounded-lg bg-gradient-to-r from-teal-500 to-cyan-500 text-slate-950 font-semibold text-xs shadow-md shadow-teal-500/20 hover:brightness-110 transition"
             >
               <Plus className="w-4 h-4" />
-              <span>New Consultation</span>
+              <span className="hidden sm:inline">New Consultation</span>
+              <span className="sm:hidden">Consult</span>
             </button>
 
             <button
@@ -874,7 +912,7 @@ export function DoctorDashboard() {
                 window.location.href = '/';
               }}
               title="Sign Out"
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/30 text-xs font-semibold transition cursor-pointer"
+              className="flex items-center gap-1 px-2 sm:px-3 py-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/30 text-xs font-semibold transition cursor-pointer"
             >
               <LogOut className="w-3.5 h-3.5" />
               <span className="hidden sm:inline">Sign Out</span>
@@ -887,8 +925,8 @@ export function DoctorDashboard() {
           className={cn(
             'flex-1 min-w-0',
             activeTab === 'messages'
-              ? 'h-[calc(100dvh-4rem)] overflow-hidden p-0 sm:p-6 flex flex-col'
-              : 'overflow-y-auto p-6'
+              ? 'h-[calc(100dvh-3.5rem)] sm:h-[calc(100dvh-4rem)] overflow-hidden p-0 sm:p-6 flex flex-col'
+              : 'overflow-y-auto p-3 sm:p-6'
           )}
         >
           <AnimatePresence mode="wait">
@@ -2194,6 +2232,8 @@ function PatientRecordsSection({
   const patient = selectedPatient || patients[0];
   const [liveVitals, setLiveVitals] = useState<any[]>([]);
   const [isLoadingVitals, setIsLoadingVitals] = useState<boolean>(false);
+  const [liveSymptoms, setLiveSymptoms] = useState<any[]>([]);
+  const [isLoadingSymptoms, setIsLoadingSymptoms] = useState<boolean>(false);
 
   // Close dropdown on outside click
   useEffect(() => {
@@ -2206,17 +2246,34 @@ function PatientRecordsSection({
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  // Strict isolation of vitals per patient — never leak or retain previous patient's vitals
+  // Strict isolation of vitals and symptoms per patient — never leak or retain previous patient's data
   useEffect(() => {
-    // 1. Immediately reset vitals when switching to another patient
+    // 1. Immediately reset vitals and symptoms when switching to another patient
     setLiveVitals([]);
+    setLiveSymptoms([]);
     if (!patient?.id) {
       setIsLoadingVitals(false);
+      setIsLoadingSymptoms(false);
       return;
     }
 
     let isMounted = true;
     setIsLoadingVitals(true);
+    setIsLoadingSymptoms(true);
+
+    async function loadPatientSymptoms() {
+      if (!patient?.id) return;
+      try {
+        const sHistory = await getSymptomHistory(30, patient.id);
+        if (isMounted) {
+          setLiveSymptoms(sHistory || []);
+          setIsLoadingSymptoms(false);
+        }
+      } catch (err) {
+        console.warn('Error loading patient symptoms in doctor EMR:', err);
+        if (isMounted) setIsLoadingSymptoms(false);
+      }
+    }
 
     async function loadPatientVitals() {
       try {
@@ -2301,7 +2358,9 @@ function PatientRecordsSection({
     }
 
     loadPatientVitals();
+    loadPatientSymptoms();
     const interval = setInterval(loadPatientVitals, 3000);
+    const symptomsInterval = setInterval(loadPatientSymptoms, 4000);
 
     // Supabase realtime channel for instant event push
     const channel = supabase
@@ -2315,10 +2374,23 @@ function PatientRecordsSection({
       )
       .subscribe();
 
+    const symptomsChannel = supabase
+      .channel(`patient_symptoms_live_${patient.id}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'symptom_logs', filter: `patient_id=eq.${patient.id}` },
+        () => {
+          if (isMounted) loadPatientSymptoms();
+        }
+      )
+      .subscribe();
+
     return () => {
       isMounted = false;
       clearInterval(interval);
+      clearInterval(symptomsInterval);
       supabase.removeChannel(channel);
+      supabase.removeChannel(symptomsChannel);
     };
   }, [patient?.id]);
 
@@ -2393,62 +2465,78 @@ function PatientRecordsSection({
                 <ChevronDown className={cn('w-4 h-4 text-slate-400 transition-transform shrink-0', isDropdownOpen && 'rotate-180')} />
               </button>
 
-              {/* Dropdown Panel with Search */}
+              {/* Dropdown Panel with Search & Mobile Backdrop */}
               {isDropdownOpen && (
-                <div className="absolute left-0 right-0 top-full mt-2 z-50 rounded-2xl bg-slate-950 border border-slate-800 shadow-2xl p-2 space-y-2 max-h-80 flex flex-col">
-                  <div className="relative shrink-0">
-                    <Search className="w-3.5 h-3.5 absolute left-3 top-2.5 text-slate-400" />
-                    <input
-                      type="text"
-                      autoFocus
-                      value={search}
-                      onChange={e => setSearch(e.target.value)}
-                      placeholder="Filter by name or PID..."
-                      className="w-full pl-8 pr-3 py-1.5 rounded-lg bg-slate-900 border border-slate-700 text-xs text-white placeholder-slate-500 outline-none focus:border-teal-400"
-                    />
-                  </div>
+                <>
+                  <div
+                    className="fixed inset-0 z-40 bg-black/50 sm:bg-transparent"
+                    onClick={() => setIsDropdownOpen(false)}
+                  />
+                  <div className="absolute left-0 right-0 sm:right-auto sm:w-80 top-full mt-2 z-50 rounded-2xl bg-slate-950 border border-slate-800 shadow-2xl p-2 space-y-2 max-h-72 flex flex-col">
+                    <div className="relative shrink-0 flex items-center gap-1.5">
+                      <div className="relative flex-1">
+                        <Search className="w-3.5 h-3.5 absolute left-3 top-2.5 text-slate-400" />
+                        <input
+                          type="text"
+                          autoFocus
+                          value={search}
+                          onChange={e => setSearch(e.target.value)}
+                          placeholder="Filter by name or PID..."
+                          className="w-full pl-8 pr-3 py-1.5 rounded-lg bg-slate-900 border border-slate-700 text-xs text-white placeholder-slate-500 outline-none focus:border-teal-400"
+                        />
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setIsDropdownOpen(false)}
+                        className="sm:hidden p-1.5 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-white"
+                        title="Close"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
 
-                  <div className="overflow-y-auto space-y-1 flex-1 pr-1">
-                    {filteredPatients.length > 0 ? (
-                      filteredPatients.map(p => (
-                        <button
-                          key={p.id}
-                          type="button"
-                          onClick={() => {
-                            onSelectPatient(p);
-                            setIsDropdownOpen(false);
-                            setSearch('');
-                          }}
-                          className={cn(
-                            'w-full p-2.5 rounded-xl text-left transition flex items-center justify-between gap-2 cursor-pointer',
-                            p.id === patient?.id
-                              ? 'bg-teal-500/20 border border-teal-500/40 text-teal-200'
-                              : 'hover:bg-slate-900 text-slate-300'
-                          )}
-                        >
-                          <div className="flex items-center gap-2 min-w-0">
-                            <div className="w-6 h-6 rounded-md bg-teal-500/20 text-teal-300 font-bold text-[11px] flex items-center justify-center shrink-0">
-                              {p.name.charAt(0)}
+                    <div className="overflow-y-auto space-y-1 flex-1 pr-1">
+                      {filteredPatients.length > 0 ? (
+                        filteredPatients.map(p => (
+                          <button
+                            key={p.id}
+                            type="button"
+                            onClick={() => {
+                              onSelectPatient(p);
+                              setIsDropdownOpen(false);
+                              setSearch('');
+                            }}
+                            className={cn(
+                              'w-full p-2.5 rounded-xl text-left transition flex items-center justify-between gap-2 cursor-pointer',
+                              p.id === patient?.id
+                                ? 'bg-teal-500/20 border border-teal-500/40 text-teal-200'
+                                : 'hover:bg-slate-900 text-slate-300'
+                            )}
+                          >
+                            <div className="flex items-center gap-2 min-w-0">
+                              <div className="w-6 h-6 rounded-md bg-teal-500/20 text-teal-300 font-bold text-[11px] flex items-center justify-center shrink-0">
+                                {p.name.charAt(0)}
+                              </div>
+                              <div className="min-w-0">
+                                <p className="text-xs font-semibold text-white truncate">{p.name}</p>
+                                <p className="text-[10px] text-slate-400 font-mono">
+                                  {p.pid} • {p.age}y {p.gender}
+                                </p>
+                              </div>
                             </div>
-                            <div className="min-w-0">
-                              <p className="text-xs font-semibold text-white truncate">{p.name}</p>
-                              <p className="text-[10px] text-slate-400 font-mono">
-                                {p.pid} • {p.age}y {p.gender}
-                              </p>
-                            </div>
-                          </div>
-                          {p.bloodGroup && (
-                            <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 shrink-0">
-                              {p.bloodGroup}
-                            </span>
-                          )}
-                        </button>
-                      ))
-                    ) : (
-                      <p className="text-center text-xs text-slate-500 py-4">No matching patients found.</p>
-                    )}
+                            {p.bloodGroup && (
+                              <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 shrink-0">
+                                {p.bloodGroup}
+                              </span>
+                            )}
+                          </button>
+                        ))
+                      ) : (
+                        <p className="text-center text-xs text-slate-500 py-4">No matching patients found.</p>
+                      )}
+                    </div>
                   </div>
-                </div>
+                </>
               )}
             </div>
 
@@ -2556,29 +2644,29 @@ function PatientRecordsSection({
         </div>
       ) : patient ? (
         <div className="space-y-4">
-          {/* Active Patient Safety & Isolation Verification Banner (Prevents doctor clinical confusion) */}
-          <div className="p-3.5 rounded-2xl bg-gradient-to-r from-teal-950/70 via-slate-900 to-slate-950 border border-teal-500/30 flex flex-wrap items-center justify-between gap-3 text-xs shadow-lg shadow-teal-500/5">
-            <div className="flex items-center gap-3">
-              <div className="w-3 h-3 rounded-full bg-emerald-400 animate-pulse shrink-0" />
-              <div>
-                <span className="text-[11px] uppercase tracking-wider text-teal-400 font-bold mr-2">
-                  Verified Active Chart:
+          {/* Active Patient Safety & Isolation Verification Banner (Compact & Responsive on Mobile) */}
+          <div className="p-2.5 sm:p-3 rounded-xl sm:rounded-2xl bg-gradient-to-r from-teal-950/70 via-slate-900 to-slate-950 border border-teal-500/30 flex items-center justify-between gap-2 text-xs shadow-lg shadow-teal-500/5">
+            <div className="flex items-center gap-2 sm:gap-2.5 min-w-0">
+              <div className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse shrink-0" />
+              <div className="flex items-center gap-1.5 sm:gap-2 truncate">
+                <span className="hidden sm:inline text-[11px] uppercase tracking-wider text-teal-400 font-bold">
+                  Active Chart:
                 </span>
-                <span className="text-sm font-extrabold text-white mr-2">{patient.name}</span>
-                <span className="font-mono text-xs text-cyan-300 px-2 py-0.5 rounded bg-cyan-500/10 border border-cyan-500/20 font-bold">
+                <span className="text-xs sm:text-sm font-extrabold text-white truncate">{patient.name}</span>
+                <span className="font-mono text-[10px] sm:text-xs text-cyan-300 px-1.5 py-0.5 rounded bg-cyan-500/10 border border-cyan-500/20 font-bold shrink-0">
                   {patient.pid}
                 </span>
               </div>
             </div>
 
-            <div className="flex flex-wrap items-center gap-3 text-[11px] text-slate-300">
-              <span>{patient.age} yrs • {patient.gender}</span>
-              <span className="text-slate-600">|</span>
-              <span>Blood Group: <strong className="text-teal-300">{patient.bloodGroup}</strong></span>
-              <span className="text-slate-600">|</span>
-              <span className="text-emerald-400 font-semibold flex items-center gap-1">
-                <CheckCircle2 className="w-3.5 h-3.5" />
-                Strict Chart Isolation Active
+            <div className="flex items-center gap-2 text-[10px] sm:text-[11px] text-slate-300 shrink-0">
+              <span className="hidden md:inline">{patient.age}y {patient.gender}</span>
+              <span className="hidden md:inline text-slate-600">|</span>
+              <span className="hidden sm:inline">Blood: <strong className="text-teal-300">{patient.bloodGroup || 'N/A'}</strong></span>
+              <span className="text-emerald-400 font-semibold flex items-center gap-1 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-full">
+                <CheckCircle2 className="w-3 h-3 shrink-0" />
+                <span className="hidden sm:inline">Chart Isolated</span>
+                <span className="sm:hidden text-[9px]">Isolated</span>
               </span>
             </div>
           </div>
@@ -2715,6 +2803,106 @@ function PatientRecordsSection({
                       <p className="text-xs text-slate-300 font-medium">No vitals readings logged yet for {patient.name}.</p>
                       <p className="text-[11px] text-slate-500 leading-relaxed">
                         When this patient records biometric vitals, they will instantly synchronize and appear here.
+                      </p>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Patient Reported Symptoms Log with Live Sync */}
+              <div className="p-4 sm:p-5 rounded-2xl bg-white/[0.03] border border-white/10 backdrop-blur-md">
+                <div className="flex items-center justify-between mb-3">
+                  <h4 className="text-xs font-semibold text-white flex items-center gap-2">
+                    <Thermometer className="w-4 h-4 text-amber-400" />
+                    <span>Reported Symptoms ({patient.name})</span>
+                  </h4>
+                  {isLoadingSymptoms ? (
+                    <span className="text-[10px] font-mono text-cyan-400 flex items-center gap-1">
+                      <RefreshCw className="w-3 h-3 animate-spin" /> Syncing...
+                    </span>
+                  ) : (
+                    <span className="text-[10px] font-mono text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-full flex items-center gap-1.5">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                      Live Sync
+                    </span>
+                  )}
+                </div>
+
+                <div className="space-y-3">
+                  {isLoadingSymptoms && liveSymptoms.length === 0 ? (
+                    <div className="p-5 rounded-xl bg-white/[0.01] border border-white/5 text-center space-y-2">
+                      <RefreshCw className="w-5 h-5 text-amber-400 animate-spin mx-auto" />
+                      <p className="text-xs text-slate-400">Loading {patient.name}'s reported symptoms...</p>
+                    </div>
+                  ) : liveSymptoms.length > 0 ? (
+                    liveSymptoms.map((sym: any, i: number) => {
+                      const isSevere = sym.severity === 'severe' || (sym.severity_score && sym.severity_score >= 7);
+                      const isModerate = sym.severity === 'moderate' || (sym.severity_score && sym.severity_score >= 4 && sym.severity_score < 7);
+                      const recordedDate = sym.created_at
+                        ? new Date(sym.created_at).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' }) + ' ' + new Date(sym.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                        : 'Recently';
+
+                      const symptomChips = (sym.symptom_type || '')
+                        .split(',')
+                        .map((s: string) => s.trim())
+                        .filter(Boolean);
+
+                      return (
+                        <div key={sym.id || i} className="p-3 rounded-xl bg-white/[0.02] border border-white/5 text-xs space-y-2">
+                          <div className="flex items-center justify-between text-[11px]">
+                            <span className="text-slate-400 font-mono">{recordedDate}</span>
+                            <span
+                              className={cn(
+                                'px-2 py-0.5 rounded-full text-[10px] font-bold capitalize border',
+                                isSevere
+                                  ? 'bg-rose-500/20 text-rose-300 border-rose-500/30'
+                                  : isModerate
+                                  ? 'bg-amber-500/20 text-amber-300 border-amber-500/30'
+                                  : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
+                              )}
+                            >
+                              {sym.severity || 'Mild'} severity
+                            </span>
+                          </div>
+
+                          <div className="flex flex-wrap gap-1.5">
+                            {symptomChips.map((chip: string, cIdx: number) => (
+                              <span
+                                key={cIdx}
+                                className="px-2 py-0.5 rounded-lg bg-teal-500/10 border border-teal-500/20 text-teal-300 font-medium text-[11px]"
+                              >
+                                {chip}
+                              </span>
+                            ))}
+                          </div>
+
+                          <div className="flex flex-wrap items-center gap-2 text-[10px] text-slate-400 font-mono pt-1 border-t border-white/5">
+                            {sym.body_location && (
+                              <span className="px-1.5 py-0.5 rounded bg-white/5">Loc: {sym.body_location}</span>
+                            )}
+                            {sym.duration && (
+                              <span className="px-1.5 py-0.5 rounded bg-white/5">Dur: {sym.duration}</span>
+                            )}
+                            {sym.pain_level !== undefined && sym.pain_level !== null && (
+                              <span className={cn('px-1.5 py-0.5 rounded', sym.pain_level >= 7 ? 'bg-rose-500/10 text-rose-300' : 'bg-white/5')}>
+                                Pain: {sym.pain_level}/10
+                              </span>
+                            )}
+                          </div>
+
+                          {sym.notes && (
+                            <p className="text-[11px] text-slate-300 italic bg-white/[0.02] p-2 rounded-lg border border-white/5">
+                              "{sym.notes}"
+                            </p>
+                          )}
+                        </div>
+                      );
+                    })
+                  ) : (
+                    <div className="p-4 rounded-xl bg-white/[0.01] border border-white/5 text-center space-y-1">
+                      <p className="text-xs text-slate-300 font-medium">No symptoms reported yet by {patient.name}.</p>
+                      <p className="text-[11px] text-slate-500 leading-relaxed">
+                        When this patient logs their symptoms in "Log My Symptoms", they will automatically appear here.
                       </p>
                     </div>
                   )}
@@ -2924,7 +3112,10 @@ function MessagesSection({
   onOpenUnlockModal
 }: any) {
   const [showPatientListOnMobile, setShowPatientListOnMobile] = useState(false);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
+  const isAtBottomRef = useRef(true);
+  const prevMessagesCountRef = useRef(0);
+  const activePatientIdRef = useRef<string | undefined>(undefined);
 
   if (!patients || patients.length === 0) {
     return (
@@ -2952,10 +3143,35 @@ function MessagesSection({
   const activePatient = patients.find((p: Patient) => p.id === selectedPatientId) || patients[0];
   const patientMessages = Array.isArray(messages) ? messages : (messages[activePatient?.id] || []);
 
-  // Auto-scroll on new message
+  const handleScroll = () => {
+    const el = messagesContainerRef.current;
+    if (!el) return;
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 70;
+    isAtBottomRef.current = atBottom;
+  };
+
+  // Only auto-scroll when switching patient thread, initial load, or when a new message arrives and user is already at bottom
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [patientMessages]);
+    const isPatientSwitched = activePatientIdRef.current !== activePatient?.id;
+    activePatientIdRef.current = activePatient?.id;
+
+    const count = patientMessages.length;
+    const isNewMessage = count > prevMessagesCountRef.current;
+    const lastMsg = count > 0 ? patientMessages[count - 1] : null;
+    const isFromDoctor = lastMsg && (lastMsg.senderRole === 'doctor' || lastMsg.sender === 'doctor');
+
+    if (isPatientSwitched || prevMessagesCountRef.current === 0 || (isNewMessage && (isAtBottomRef.current || isFromDoctor))) {
+      setTimeout(() => {
+        if (messagesContainerRef.current) {
+          messagesContainerRef.current.scrollTo({
+            top: messagesContainerRef.current.scrollHeight,
+            behavior: isPatientSwitched ? 'auto' : 'smooth',
+          });
+        }
+      }, 50);
+    }
+    prevMessagesCountRef.current = count;
+  }, [patientMessages, activePatient?.id]);
 
   return (
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="h-full flex-1 flex rounded-none sm:rounded-2xl bg-white/[0.03] border-0 sm:border border-white/10 backdrop-blur-md overflow-hidden relative">
@@ -3056,7 +3272,11 @@ function MessagesSection({
         </div>
 
         {/* Message Bubble List */}
-        <div className="flex-1 min-h-0 overflow-y-auto p-3 sm:p-4 space-y-3 overscroll-contain">
+        <div
+          ref={messagesContainerRef}
+          onScroll={handleScroll}
+          className="flex-1 min-h-0 overflow-y-auto p-3 sm:p-4 space-y-3 overscroll-contain"
+        >
           {patientMessages.length === 0 ? (
             <div className="h-full flex flex-col items-center justify-center text-center p-6 space-y-2 text-slate-500">
               <MessageSquare className="w-8 h-8 opacity-40" />
@@ -3085,7 +3305,6 @@ function MessagesSection({
               );
             })
           )}
-          <div ref={messagesEndRef} />
         </div>
 
         {/* Input Bar (Guaranteed Visible on Mobile, Never Cut Off) */}

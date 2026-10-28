@@ -196,40 +196,60 @@ export async function logSymptom(symptomData: SymptomLogData, userId: string) {
   }
   if (!userId) throw new Error('No user ID provided');
 
-  try {
-    const { error } = await supabase.from('symptom_logs').insert({
-      ...symptomData,
-      patient_id: userId,
-      created_at: new Date().toISOString(),
-    } as any);
-    if (!error) return;
-  } catch {
-    // continue to fallback
-  }
+  const recordedAt = new Date().toISOString();
+  const entryId = crypto.randomUUID();
+  const fullLog = {
+    id: entryId,
+    patient_id: userId,
+    created_at: recordedAt,
+    ...symptomData,
+  };
 
-  // Local storage fallback for resilient demo & offline support
+  // 1. Always update local cache so current browser immediately has the new entry
   const KEY = 'medconnect_symptom_logs';
   try {
     const all = JSON.parse(localStorage.getItem(KEY) || '[]');
-    all.unshift({
-      id: crypto.randomUUID(),
-      patient_id: userId,
-      ...symptomData,
-      created_at: new Date().toISOString(),
-    });
+    all.unshift(fullLog);
     localStorage.setItem(KEY, JSON.stringify(all));
   } catch (err) {
     console.error('Failed to save symptom log to localStorage', err);
   }
+
+  // 2. Insert into cloud symptom_logs table
+  try {
+    await supabase.from('symptom_logs').insert(fullLog as any);
+  } catch (cloudErr) {
+    console.warn('Supabase symptom_logs insert note:', cloudErr);
+  }
+
+  // 3. Mirror to profiles.metadata.symptoms_history & latest_symptoms
+  // Since all authenticated physicians can query public profiles under RLS,
+  // this guarantees instant cross-device visibility on the doctor workstation
+  try {
+    const { data: prof } = await supabase.from('profiles').select('metadata').eq('id', userId).maybeSingle();
+    const existingMeta = (prof?.metadata as Record<string, any>) || {};
+    const existingHistory = Array.isArray(existingMeta.symptoms_history) ? existingMeta.symptoms_history : [];
+    const updatedHistory = [fullLog, ...existingHistory.filter((e: any) => e.id !== entryId)].slice(0, 40);
+    await supabase.from('profiles').update({
+      metadata: {
+        ...existingMeta,
+        latest_symptoms: fullLog,
+        symptoms_history: updatedHistory,
+      },
+    }).eq('id', userId);
+  } catch (profErr) {
+    console.warn('Profile symptom metadata sync error:', profErr);
+  }
 }
 
-export async function getSymptomHistory(limit = 10, userId = '') {
+export async function getSymptomHistory(limit = 20, userId = '') {
   if (!userId) {
     const user = await getCurrentUser();
     userId = user?.id || '';
   }
   if (!userId) return [];
 
+  // 1. Query cloud symptom_logs table
   try {
     const { data, error } = await supabase
       .from('symptom_logs')
@@ -243,6 +263,18 @@ export async function getSymptomHistory(limit = 10, userId = '') {
     // fallback
   }
 
+  // 2. Query profiles.metadata.symptoms_history (accessible by attending physicians)
+  try {
+    const { data: prof } = await supabase.from('profiles').select('metadata').eq('id', userId).maybeSingle();
+    const metaList = (prof?.metadata as any)?.symptoms_history;
+    if (Array.isArray(metaList) && metaList.length > 0) {
+      return metaList.slice(0, limit);
+    }
+  } catch {
+    // fallback
+  }
+
+  // 3. Local storage fallback
   const KEY = 'medconnect_symptom_logs';
   try {
     const all = JSON.parse(localStorage.getItem(KEY) || '[]');
@@ -252,8 +284,13 @@ export async function getSymptomHistory(limit = 10, userId = '') {
   }
 }
 
-export async function deleteSymptomLog(id: string) {
+export async function deleteSymptomLog(id: string, userId = '') {
   if (!id) return;
+  if (!userId) {
+    const user = await getCurrentUser();
+    userId = user?.id || '';
+  }
+
   try {
     await supabase.from('symptom_logs').delete().eq('id', id);
   } catch {
@@ -267,6 +304,24 @@ export async function deleteSymptomLog(id: string) {
     localStorage.setItem(KEY, JSON.stringify(filtered));
   } catch (err) {
     console.error('Failed to remove symptom log from localStorage', err);
+  }
+
+  if (userId) {
+    try {
+      const { data: prof } = await supabase.from('profiles').select('metadata').eq('id', userId).maybeSingle();
+      const existingMeta = (prof?.metadata as Record<string, any>) || {};
+      const existingHistory = Array.isArray(existingMeta.symptoms_history) ? existingMeta.symptoms_history : [];
+      const updatedHistory = existingHistory.filter((e: any) => e.id !== id);
+      await supabase.from('profiles').update({
+        metadata: {
+          ...existingMeta,
+          latest_symptoms: updatedHistory[0] || null,
+          symptoms_history: updatedHistory,
+        },
+      }).eq('id', userId);
+    } catch (profErr) {
+      console.warn('Profile symptom delete metadata sync error:', profErr);
+    }
   }
 }
 

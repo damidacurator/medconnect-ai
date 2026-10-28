@@ -810,7 +810,7 @@ export function PatientDashboard() {
             'flex-1 flex flex-col min-w-0',
             activeSection === 'messages'
               ? 'h-[calc(100dvh-4rem)] overflow-hidden p-0 sm:p-4'
-              : 'overflow-y-auto p-4 sm:p-6 lg:p-8 scrollbar-thin scrollbar-thumb-slate-800'
+              : 'overflow-y-auto p-3 sm:p-6 lg:p-8 scrollbar-thin scrollbar-thumb-slate-800'
           )}
         >
           <AnimatePresence mode="wait">
@@ -1701,7 +1701,7 @@ function LogSymptomsSection({
   const handleDeleteSymptom = async (id: string) => {
     if (!id) return;
     try {
-      await deleteSymptomLog(id);
+      await deleteSymptomLog(id, userId);
       if (onSymptomDeleted) {
         onSymptomDeleted(id);
       }
@@ -2687,12 +2687,40 @@ function MessagesSection({ userId, patientPid, patientName, onShowToast, onNavig
   const [inputText, setInputText] = useState('');
   const [isSending, setIsSending] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
+  const isAtBottomRef = useRef(true);
+  const prevMessagesCountRef = useRef(0);
+  const selectedDoctorIdRef = useRef(selectedDoctorId);
 
-  // Auto-scroll to latest message
+  const handleScroll = () => {
+    const el = messagesContainerRef.current;
+    if (!el) return;
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 70;
+    isAtBottomRef.current = atBottom;
+  };
+
+  // Only auto-scroll to bottom on doctor switch, initial load, or when a new message arrives and user was already at bottom
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+    const isDocSwitched = selectedDoctorIdRef.current !== selectedDoctorId;
+    selectedDoctorIdRef.current = selectedDoctorId;
+
+    const count = messages.length;
+    const isNewMessage = count > prevMessagesCountRef.current;
+    const lastMsg = count > 0 ? messages[count - 1] : null;
+    const isFromPatient = lastMsg && lastMsg.senderRole === 'patient';
+
+    if (isDocSwitched || prevMessagesCountRef.current === 0 || (isNewMessage && (isAtBottomRef.current || isFromPatient))) {
+      setTimeout(() => {
+        if (messagesContainerRef.current) {
+          messagesContainerRef.current.scrollTo({
+            top: messagesContainerRef.current.scrollHeight,
+            behavior: isDocSwitched ? 'auto' : 'smooth',
+          });
+        }
+      }, 50);
+    }
+    prevMessagesCountRef.current = count;
+  }, [messages, selectedDoctorId]);
 
   // 1. Sync connected doctors from Supabase cloud + messages table
   useEffect(() => {
@@ -2773,7 +2801,18 @@ function MessagesSection({ userId, patientPid, patientName, onShowToast, onNavig
     async function loadThread() {
       try {
         const msgs = await fetchMessages(userId, selectedDoctorId, userId, 'patient');
-        if (isMounted) setMessages(msgs);
+        if (isMounted) {
+          setMessages(prev => {
+            if (
+              prev.length === msgs.length &&
+              prev.length > 0 &&
+              prev[prev.length - 1]?.id === msgs[msgs.length - 1]?.id
+            ) {
+              return prev; // keep reference to avoid triggering scroll effects
+            }
+            return msgs;
+          });
+        }
         await markMessagesAsRead(selectedDoctorId, userId);
       } catch (err) {
         console.warn('Error fetching patient messages:', err);
@@ -2955,7 +2994,11 @@ function MessagesSection({ userId, patientPid, patientName, onShowToast, onNavig
             </div>
 
             {/* Messages Body */}
-            <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden p-3 sm:p-4 space-y-3 overscroll-contain">
+            <div
+              ref={messagesContainerRef}
+              onScroll={handleScroll}
+              className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden p-3 sm:p-4 space-y-3 overscroll-contain"
+            >
               {messages.length === 0 ? (
                 <div className="py-12 text-center space-y-2">
                   <MessageSquare className="w-8 h-8 text-slate-600 mx-auto" />
@@ -2989,7 +3032,6 @@ function MessagesSection({ userId, patientPid, patientName, onShowToast, onNavig
                   );
                 })
               )}
-              <div ref={messagesEndRef} />
             </div>
 
             {/* Input Bar (Guaranteed Visible on Mobile, Never Cut Off) */}
