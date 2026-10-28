@@ -3790,7 +3790,7 @@ function MedicalRecordModal({ patient, onClose, onAlertDoctor }: MedicalRecordMo
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 p-3.5 rounded-xl bg-slate-950 border border-slate-800 text-xs">
           <div>
             <span className="text-slate-500 block">Age / Gender</span>
-            <span className="font-semibold text-white">{patient.age} yrs &bull; {patient.gender}</span>
+            <span className="font-semibold text-white">{patient.age && patient.age > 0 ? `${patient.age} yrs` : 'Age not recorded'} &bull; {patient.gender}</span>
           </div>
           <div>
             <span className="text-slate-500 block">Blood Group</span>

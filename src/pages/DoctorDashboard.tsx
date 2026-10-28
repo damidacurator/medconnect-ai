@@ -50,11 +50,12 @@ import {
   Key,
   Lock,
   Unlock,
-  Trash2
+  Trash2,
+  Edit3
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/useAuth';
-import { supabase, getSymptomHistory, saveConsultationRecord, getDoctorConsultations } from '@/lib/supabase';
+import { supabase, getSymptomHistory, saveConsultationRecord, getDoctorConsultations, updateProfile } from '@/lib/supabase';
 import { DiagnosticImagingVault } from '@/components/medical/DiagnosticImagingVault';
 import { unlockPatientWithPin, fetchDoctorUnlockedPatients } from '@/lib/accessControl';
 import {
@@ -73,13 +74,14 @@ export interface Patient {
   pid: string;
   name: string;
   age: number;
-  gender: 'Male' | 'Female' | 'Other';
+  gender: string;
   bloodGroup: string;
   phone: string;
   email: string;
   allergies: Array<{ name: string; severity: 'Mild' | 'Moderate' | 'Critical' }>;
   chronicConditions: string[];
   lastVisit?: string;
+  metadata?: Record<string, any>;
   vitalsHistory: Array<{
     date: string;
     bp: string;
@@ -213,6 +215,11 @@ export function DoctorDashboard() {
         const loaded = await fetchDoctorUnlockedPatients(user.id);
         if (isMounted && Array.isArray(loaded)) {
           setPatients(loaded);
+          setSelectedPatientForRecord(prev => {
+            if (!prev) return loaded[0] || null;
+            const updated = loaded.find(p => p.id === prev.id);
+            return updated || prev;
+          });
         }
       } catch (err) {
         console.warn('Error loading doctor unlocked patients:', err);
@@ -1611,7 +1618,7 @@ function PatientQueueSection({
 
                     {patient && (
                       <div className="flex flex-wrap items-center gap-4 mt-2 text-xs text-slate-400">
-                        <span>Age: {patient.age}y</span>
+                        <span>Age: {patient.age && patient.age > 0 ? `${patient.age}y` : 'Age N/A'}</span>
                         <span>Gender: {patient.gender}</span>
                         <span>Blood Group: {patient.bloodGroup}</span>
                         {patient.allergies.length > 0 && (
@@ -1806,7 +1813,7 @@ function ConsultationFlowSection({
                   <div>
                     <h5 className="font-semibold text-white text-sm">{p.name}</h5>
                     <p className="text-xs text-slate-400 mt-0.5">
-                      {p.age}y • {p.gender} • Blood Group: {p.bloodGroup}
+                      {p.age && p.age > 0 ? `${p.age}y` : 'Age N/A'} • {p.gender} • Blood Group: {p.bloodGroup || 'Not specified'}
                     </p>
                     <p className="text-[11px] font-mono text-teal-400 mt-1">{p.pid}</p>
                   </div>
@@ -2325,6 +2332,149 @@ function PatientRecordsSection({
   const [liveSymptoms, setLiveSymptoms] = useState<any[]>([]);
   const [isLoadingSymptoms, setIsLoadingSymptoms] = useState<boolean>(false);
 
+  // Live Demographics State & Quick Edit Modal
+  const [liveDemographics, setLiveDemographics] = useState<{
+    age?: number | null;
+    gender?: string;
+    bloodGroup?: string;
+    phone?: string;
+    email?: string;
+  } | null>(null);
+
+  const [isEditingDemographics, setIsEditingDemographics] = useState(false);
+  const [editAge, setEditAge] = useState('');
+  const [editGender, setEditGender] = useState('male');
+  const [editBloodGroup, setEditBloodGroup] = useState('O+');
+  const [savingDemographics, setSavingDemographics] = useState(false);
+
+  useEffect(() => {
+    if (!patient?.id) {
+      setLiveDemographics(null);
+      return;
+    }
+
+    let isMounted = true;
+    async function fetchLivePatientProfile() {
+      try {
+        const { data: prof } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', patient.id)
+          .maybeSingle();
+
+        if (isMounted && prof) {
+          const meta = (prof.metadata as Record<string, any>) || {};
+          let a = meta.age ?? prof.age ?? null;
+          if (!a && meta.date_of_birth) {
+            const dob = new Date(meta.date_of_birth);
+            if (!isNaN(dob.getTime())) {
+              a = Math.floor((Date.now() - dob.getTime()) / (365.25 * 24 * 60 * 60 * 1000));
+            }
+          }
+          if (!a) {
+            try {
+              const cached = localStorage.getItem(`medconnect_patient_age_${patient.id}`);
+              if (cached) a = parseInt(cached, 10);
+            } catch { /* ignore */ }
+          }
+          const parsedA = a !== null && a !== undefined && !isNaN(Number(a)) ? Number(a) : null;
+          const g = meta.gender || prof.gender || patient.gender || 'Not specified';
+          const b = meta.blood_group || meta.bloodGroup || prof.blood_group || patient.bloodGroup || 'Not specified';
+
+          setLiveDemographics({
+            age: parsedA,
+            gender: g,
+            bloodGroup: b,
+            phone: prof.phone || patient.phone,
+            email: prof.email || patient.email,
+          });
+        } else if (isMounted) {
+          const cached = localStorage.getItem(`medconnect_patient_age_${patient.id}`);
+          const cachedBlood = localStorage.getItem(`medconnect_patient_blood_${patient.id}`);
+          if (cached || cachedBlood) {
+            setLiveDemographics({
+              age: cached ? parseInt(cached, 10) : (patient.age > 0 ? patient.age : null),
+              gender: patient.gender,
+              bloodGroup: cachedBlood || patient.bloodGroup,
+            });
+          }
+        }
+      } catch (e) {
+        console.warn('Error loading patient live demographics in doctor chart:', e);
+      }
+    }
+
+    fetchLivePatientProfile();
+
+    const handleProfileUpdate = () => {
+      fetchLivePatientProfile();
+    };
+    window.addEventListener('medconnect:profile-updated', handleProfileUpdate);
+    return () => {
+      isMounted = false;
+      window.removeEventListener('medconnect:profile-updated', handleProfileUpdate);
+    };
+  }, [patient?.id]);
+
+  const displayAge = liveDemographics?.age !== undefined && liveDemographics?.age !== null
+    ? liveDemographics.age
+    : (patient?.age && patient.age > 0 ? patient.age : (patient?.metadata as any)?.age ? Number((patient?.metadata as any).age) : null);
+
+  const displayGender = liveDemographics?.gender && liveDemographics.gender !== 'Not specified'
+    ? liveDemographics.gender
+    : (patient?.gender || 'Not specified');
+
+  const displayBloodGroup = liveDemographics?.bloodGroup && liveDemographics.bloodGroup !== 'Not specified'
+    ? liveDemographics.bloodGroup
+    : (patient?.bloodGroup || 'Not specified');
+
+  const handleSaveDemographics = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!patient?.id) return;
+    setSavingDemographics(true);
+    try {
+      const numAge = editAge ? parseInt(editAge, 10) : null;
+      await updateProfile(patient.id, {
+        age: numAge,
+        gender: editGender,
+        blood_group: editBloodGroup,
+        metadata: {
+          ...((patient.metadata as any) || {}),
+          age: numAge,
+          gender: editGender,
+          blood_group: editBloodGroup,
+        },
+      });
+
+      if (numAge !== null) {
+        localStorage.setItem(`medconnect_patient_age_${patient.id}`, String(numAge));
+      }
+      if (editGender) {
+        localStorage.setItem(`medconnect_patient_gender_${patient.id}`, editGender);
+      }
+      if (editBloodGroup) {
+        localStorage.setItem(`medconnect_patient_blood_${patient.id}`, editBloodGroup);
+      }
+
+      setLiveDemographics({
+        age: numAge,
+        gender: editGender,
+        bloodGroup: editBloodGroup,
+      });
+
+      patient.age = numAge || 0;
+      patient.gender = editGender;
+      patient.bloodGroup = editBloodGroup;
+
+      setIsEditingDemographics(false);
+      showToast('Patient Demographics Saved: Age and Blood Group synced to cloud chart.');
+    } catch {
+      showToast('Failed to update patient demographics.');
+    } finally {
+      setSavingDemographics(false);
+    }
+  };
+
   // Close dropdown on outside click
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
@@ -2697,7 +2847,7 @@ function PatientRecordsSection({
                       <p className="text-xs font-bold text-white truncate">{p.name}</p>
                       <p className="text-[10px] text-teal-300 font-mono truncate">{p.pid}</p>
                       <p className="text-[10px] text-slate-400">
-                        {p.age}y • {p.gender} • {p.bloodGroup || 'Blood: N/A'}
+                        {p.age && p.age > 0 ? `${p.age}y` : 'Age N/A'} • {p.gender} • {p.bloodGroup || 'Blood: N/A'}
                       </p>
                     </div>
                   </div>
@@ -2750,9 +2900,11 @@ function PatientRecordsSection({
             </div>
 
             <div className="flex items-center gap-2 text-[10px] sm:text-[11px] text-slate-300 shrink-0">
-              <span className="hidden md:inline">{patient.age && patient.age > 0 ? `${patient.age}y` : 'Age N/A'} {patient.gender}</span>
+              <span className="hidden md:inline font-semibold">
+                {displayAge !== null && displayAge > 0 ? `${displayAge} yrs` : 'Age not recorded'} • {displayGender}
+              </span>
               <span className="hidden md:inline text-slate-600">|</span>
-              <span className="hidden sm:inline">Blood: <strong className="text-teal-300">{patient.bloodGroup || 'N/A'}</strong></span>
+              <span className="hidden sm:inline">Blood: <strong className="text-teal-300 font-bold">{displayBloodGroup}</strong></span>
               <span className="text-emerald-400 font-semibold flex items-center gap-1 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-full">
                 <CheckCircle2 className="w-3 h-3 shrink-0" />
                 <span className="hidden sm:inline">Chart Isolated</span>
@@ -2778,21 +2930,39 @@ function PatientRecordsSection({
                 </div>
 
                 <div className="space-y-2.5 text-xs">
-                  <div className="flex justify-between py-1 border-b border-white/5">
+                  <div className="flex justify-between py-1 border-b border-white/5 items-center">
                     <span className="text-slate-400">Demographics</span>
-                    <span className="text-slate-200">{patient.age && patient.age > 0 ? `${patient.age} yrs` : 'Age N/A'} • {patient.gender}</span>
+                    <div className="flex items-center gap-2">
+                      <span className="text-slate-200 font-semibold">
+                        {displayAge !== null && displayAge > 0 ? `${displayAge} yrs` : 'Age not recorded'} • {displayGender}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditAge(displayAge ? String(displayAge) : '');
+                          setEditGender(displayGender !== 'Not specified' ? displayGender : 'male');
+                          setEditBloodGroup(displayBloodGroup !== 'Not specified' ? displayBloodGroup : 'O+');
+                          setIsEditingDemographics(true);
+                        }}
+                        className="px-2 py-0.5 rounded-md bg-teal-500/10 hover:bg-teal-500/20 text-teal-300 border border-teal-500/30 text-[10px] font-semibold transition cursor-pointer flex items-center gap-1"
+                        title="Edit Patient Demographics"
+                      >
+                        <Edit3 className="w-2.5 h-2.5" />
+                        <span>Edit</span>
+                      </button>
+                    </div>
                   </div>
-                  <div className="flex justify-between py-1 border-b border-white/5">
+                  <div className="flex justify-between py-1 border-b border-white/5 items-center">
                     <span className="text-slate-400">Blood Group</span>
-                    <span className="text-teal-300 font-semibold">{patient.bloodGroup}</span>
+                    <span className="text-teal-300 font-bold">{displayBloodGroup}</span>
                   </div>
                   <div className="flex justify-between py-1 border-b border-white/5">
                     <span className="text-slate-400">Phone</span>
-                    <span className="text-slate-200">{patient.phone || 'Not registered'}</span>
+                    <span className="text-slate-200">{liveDemographics?.phone || patient.phone || 'Not registered'}</span>
                   </div>
                   <div className="flex justify-between py-1 border-b border-white/5">
                     <span className="text-slate-400">Email</span>
-                    <span className="text-slate-200 truncate max-w-[170px]">{patient.email || 'Not registered'}</span>
+                    <span className="text-slate-200 truncate max-w-[170px]">{liveDemographics?.email || patient.email || 'Not registered'}</span>
                   </div>
                   <div className="flex justify-between py-1 border-b border-white/5">
                     <span className="text-slate-400">Last Consultation</span>
@@ -3105,6 +3275,107 @@ function PatientRecordsSection({
         </div>
       </div>
     ) : null}
+
+    {/* Quick Edit Demographics Modal */}
+    <AnimatePresence>
+      {isEditingDemographics && patient && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-md">
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95, y: 10 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.95, y: 10 }}
+            className="bg-slate-900 border border-slate-800 rounded-3xl p-6 w-full max-w-md shadow-2xl space-y-5"
+          >
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="text-base font-bold text-white flex items-center gap-2">
+                  <UserCheck className="w-5 h-5 text-teal-400" />
+                  Edit Patient Demographics
+                </h3>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  {patient.name} • <span className="font-mono text-teal-300 font-bold">{patient.pid}</span>
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsEditingDemographics(false)}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-white/5 transition cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveDemographics} className="space-y-4">
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 mb-1.5">
+                  Age (Years) *
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  max="125"
+                  required
+                  placeholder="e.g. 25"
+                  value={editAge}
+                  onChange={e => setEditAge(e.target.value)}
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-sm text-slate-100 focus:border-teal-400 outline-none"
+                  autoFocus
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 mb-1.5">
+                  Gender
+                </label>
+                <select
+                  value={editGender}
+                  onChange={e => setEditGender(e.target.value)}
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-sm text-slate-100 focus:border-teal-400 outline-none"
+                >
+                  <option value="male">Male</option>
+                  <option value="female">Female</option>
+                  <option value="other">Other</option>
+                  <option value="prefer_not_to_say">Prefer not to say</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 mb-1.5">
+                  Blood Group
+                </label>
+                <select
+                  value={editBloodGroup}
+                  onChange={e => setEditBloodGroup(e.target.value)}
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-sm text-slate-100 focus:border-teal-400 outline-none"
+                >
+                  <option value="Not specified">Not specified</option>
+                  {['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'].map(bg => (
+                    <option key={bg} value={bg}>{bg}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="flex items-center justify-end gap-2.5 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setIsEditingDemographics(false)}
+                  className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-400 hover:text-white transition cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={savingDemographics}
+                  className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-teal-500 to-cyan-500 text-slate-950 text-xs font-bold hover:brightness-110 transition shadow-md shadow-teal-500/20 disabled:opacity-50 cursor-pointer"
+                >
+                  {savingDemographics ? 'Saving...' : 'Save & Sync Demographics'}
+                </button>
+              </div>
+            </form>
+          </motion.div>
+        </div>
+      )}
+    </AnimatePresence>
   </motion.div>
 );
 }

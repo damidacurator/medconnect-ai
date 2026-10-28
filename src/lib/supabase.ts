@@ -643,17 +643,36 @@ export async function updateProfile(
   }
   if (!userId) throw new Error('No user ID provided');
 
+  const rawAge = updates.age;
+  const parsedAge = rawAge !== undefined && rawAge !== null && rawAge !== '' && !isNaN(Number(rawAge))
+    ? Number(rawAge)
+    : null;
+
+  const rawBlood = (updates.blood_group as string) || (updates.bloodGroup as string) || ((updates.metadata as any)?.blood_group as string);
+  const rawGender = (updates.gender as string) || ((updates.metadata as any)?.gender as string);
+
   // Always update local cache immediately so views never lag
   try {
-    if (updates.age !== undefined && updates.age !== null) {
-      localStorage.setItem(`medconnect_patient_age_${userId}`, String(updates.age));
+    if (parsedAge !== null) {
+      localStorage.setItem(`medconnect_patient_age_${userId}`, String(parsedAge));
+      localStorage.setItem(`vitalia_patient_age_${userId}`, String(parsedAge));
     }
-    if (updates.gender !== undefined && updates.gender !== null) {
-      localStorage.setItem(`medconnect_patient_gender_${userId}`, String(updates.gender));
+    if (rawGender) {
+      localStorage.setItem(`medconnect_patient_gender_${userId}`, rawGender);
+    }
+    if (rawBlood) {
+      localStorage.setItem(`medconnect_patient_blood_${userId}`, rawBlood);
     }
     const KEY = `medconnect_profile_${userId}`;
     const existing = JSON.parse(localStorage.getItem(KEY) || '{}');
-    localStorage.setItem(KEY, JSON.stringify({ ...existing, ...updates, updated_at: new Date().toISOString() }));
+    localStorage.setItem(KEY, JSON.stringify({
+      ...existing,
+      ...updates,
+      ...(parsedAge !== null ? { age: parsedAge } : {}),
+      ...(rawGender ? { gender: rawGender } : {}),
+      ...(rawBlood ? { blood_group: rawBlood } : {}),
+      updated_at: new Date().toISOString()
+    }));
   } catch (err) {
     console.warn('LocalStorage profile caching note:', err);
   }
@@ -663,60 +682,91 @@ export async function updateProfile(
     await supabase.auth.updateUser({
       data: {
         ...(updates.full_name ? { full_name: updates.full_name } : {}),
-        ...(updates.age !== undefined ? { age: updates.age } : {}),
-        ...(updates.gender !== undefined ? { gender: updates.gender } : {}),
+        ...(parsedAge !== null ? { age: parsedAge } : {}),
+        ...(rawGender ? { gender: rawGender } : {}),
       },
     });
   } catch (authErr) {
     console.warn('Supabase auth metadata update note:', authErr);
   }
 
-  // Ensure metadata object contains age and gender so it's always queryable
-  const existingMeta = (updates.metadata as Record<string, any>) || {};
-  const mergedMetadata = {
-    ...existingMeta,
-    ...(updates.age !== undefined ? { age: updates.age } : {}),
-    ...(updates.gender !== undefined ? { gender: updates.gender } : {}),
-  };
-
-  // 1. Try full upsert with age and gender columns
+  // Fetch existing profile metadata to avoid wiping nested objects
+  let existingMeta: Record<string, any> = {};
+  let existingRole = 'patient';
+  let existingEmail = '';
   try {
-    const { error: fullErr } = await supabase.from('profiles').upsert({
-      id: userId,
-      ...updates,
-      metadata: mergedMetadata,
-      updated_at: new Date().toISOString(),
-    });
-
-    if (!fullErr) {
-      if (typeof window !== 'undefined') {
-        window.dispatchEvent(new CustomEvent('medconnect:profile-updated', { detail: { userId, updates } }));
-      }
-      return;
-    }
-
-    // 2. Fallback: if error 42703 (column does not exist), remove age/gender top-level columns and save inside metadata
-    if (fullErr.code === '42703' || fullErr.message?.includes('does not exist')) {
-      const sanitized: Record<string, unknown> = { ...updates };
-      delete sanitized.age;
-      delete sanitized.gender;
-
-      const { error: fallbackErr } = await supabase.from('profiles').upsert({
-        id: userId,
-        ...sanitized,
-        metadata: mergedMetadata,
-        updated_at: new Date().toISOString(),
-      });
-
-      if (!fallbackErr) {
-        if (typeof window !== 'undefined') {
-          window.dispatchEvent(new CustomEvent('medconnect:profile-updated', { detail: { userId, updates } }));
-        }
-        return;
-      }
+    const { data: cur } = await supabase
+      .from('profiles')
+      .select('metadata, role, email')
+      .eq('id', userId)
+      .maybeSingle();
+    if (cur) {
+      existingMeta = (cur.metadata as Record<string, any>) || {};
+      if (cur.role) existingRole = cur.role;
+      if (cur.email) existingEmail = cur.email;
     }
   } catch (err) {
-    console.warn('Profile upsert exception:', err);
+    console.warn('Profile prefetch note:', err);
+  }
+
+  // Ensure metadata object contains age, gender, and blood_group
+  const inputMeta = (updates.metadata as Record<string, any>) || {};
+  const mergedMetadata: Record<string, any> = {
+    ...existingMeta,
+    ...inputMeta,
+    ...(parsedAge !== null ? { age: parsedAge } : {}),
+    ...(rawGender ? { gender: rawGender } : {}),
+    ...(rawBlood ? { blood_group: rawBlood } : {}),
+  };
+
+  // Build safe update payload - avoids triggering NOT NULL constraints on email & role
+  const updatePayload: Record<string, any> = {
+    updated_at: new Date().toISOString(),
+    metadata: mergedMetadata,
+  };
+  if (updates.full_name !== undefined) updatePayload.full_name = updates.full_name;
+  if (updates.phone !== undefined) updatePayload.phone = updates.phone;
+  if (updates.avatar_url !== undefined) updatePayload.avatar_url = updates.avatar_url;
+  if (parsedAge !== null) updatePayload.age = parsedAge;
+  if (rawGender) updatePayload.gender = rawGender;
+
+  // 1. Try targeted UPDATE (does not evaluate INSERT NOT-NULL constraints on missing columns)
+  try {
+    let { error: updateErr, count } = await supabase
+      .from('profiles')
+      .update(updatePayload)
+      .eq('id', userId);
+
+    // If column 'age' or 'gender' does not exist in profiles schema, retry without them (they are safely inside metadata)
+    if (updateErr && (updateErr.code === '42703' || updateErr.message?.includes('does not exist'))) {
+      delete updatePayload.age;
+      delete updatePayload.gender;
+      const retry = await supabase
+        .from('profiles')
+        .update(updatePayload)
+        .eq('id', userId);
+      updateErr = retry.error;
+    }
+
+    // 2. If row did not exist yet (count === 0), do an upsert including role and email
+    if (!updateErr && count === 0) {
+      const authUser = await getCurrentUser();
+      const email = existingEmail || authUser?.email || '';
+      const role = existingRole || (authUser?.user_metadata?.role as string) || 'patient';
+
+      await supabase.from('profiles').upsert({
+        id: userId,
+        email,
+        role,
+        ...updatePayload,
+      });
+    }
+
+    if (updateErr) {
+      console.warn('Profile update note:', updateErr.message);
+    }
+  } catch (err) {
+    console.warn('Profile update exception:', err);
   }
 
   if (typeof window !== 'undefined') {

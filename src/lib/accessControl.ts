@@ -425,6 +425,43 @@ export async function unlockPatientWithPin(
         r.patientPid?.replace(/^PID-/, '').replace(/-/g, '').toUpperCase() === cleanRaw
     );
 
+  // If found in local registry, refresh latest demographics from Supabase Cloud
+  if (record && record.patientId) {
+    try {
+      const { data: liveProf } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', record.patientId)
+        .maybeSingle();
+
+      if (liveProf) {
+        const meta = (liveProf.metadata as Record<string, any>) || {};
+        let a = meta.age ?? liveProf.age ?? record.age ?? null;
+        if (!a && meta.date_of_birth) {
+          const dob = new Date(meta.date_of_birth);
+          if (!isNaN(dob.getTime())) {
+            a = Math.floor((Date.now() - dob.getTime()) / (365.25 * 24 * 60 * 60 * 1000));
+          }
+        }
+        if (!a) {
+          try {
+            const cached = localStorage.getItem(`medconnect_patient_age_${record.patientId}`);
+            if (cached) a = parseInt(cached, 10);
+          } catch { /* ignore */ }
+        }
+        const parsedA = a !== null && a !== undefined && !isNaN(Number(a)) ? Number(a) : undefined;
+        record.age = parsedA;
+        record.gender = meta.gender || liveProf.gender || record.gender || 'Not specified';
+        record.bloodGroup = meta.blood_group || meta.bloodGroup || liveProf.blood_group || record.bloodGroup || 'Not specified';
+        record.patientName = liveProf.full_name || record.patientName;
+        record.phone = liveProf.phone || record.phone;
+        record.email = liveProf.email || record.email;
+      }
+    } catch (e) {
+      console.warn('Profile refresh on unlock note:', e);
+    }
+  }
+
   // 2. If not found in local registry, query Supabase Cloud (profiles table)
   if (!record) {
     try {
@@ -457,20 +494,29 @@ export async function unlockPatientWithPin(
 
         if (match) {
           const patPid = `PID-${match.id.replace(/-/g, '').slice(0, 9).toUpperCase()}`;
-          let patAge = (match.metadata as any)?.age ?? match.age ?? null;
+          const meta = (match.metadata as Record<string, any>) || {};
+          let patAge = meta.age ?? match.age ?? null;
+          if (!patAge && meta.date_of_birth) {
+            const dob = new Date(meta.date_of_birth);
+            if (!isNaN(dob.getTime())) {
+              patAge = Math.floor((Date.now() - dob.getTime()) / (365.25 * 24 * 60 * 60 * 1000));
+            }
+          }
           if (!patAge) {
             try {
               const cached = localStorage.getItem(`medconnect_patient_age_${match.id}`);
               if (cached) patAge = parseInt(cached, 10);
             } catch { /* ignore */ }
           }
-          let patGender = (match.metadata as any)?.gender ?? match.gender ?? null;
+          const parsedPatAge = patAge !== null && patAge !== undefined && !isNaN(Number(patAge)) ? Number(patAge) : undefined;
+          let patGender = meta.gender ?? match.gender ?? null;
           if (!patGender) {
             try {
               const cached = localStorage.getItem(`medconnect_patient_gender_${match.id}`);
               if (cached) patGender = cached;
             } catch { /* ignore */ }
           }
+          const patBlood = meta.blood_group || meta.bloodGroup || match.blood_group || 'Not specified';
 
           record = {
             accessCode: patPid,
@@ -479,8 +525,8 @@ export async function unlockPatientWithPin(
             patientPid: patPid,
             email: match.email || '',
             gender: patGender || 'prefer_not_to_say',
-            age: patAge || undefined,
-            bloodGroup: (match.metadata as any)?.blood_group,
+            age: parsedPatAge,
+            bloodGroup: patBlood,
             phone: match.phone || '',
             authorizedDoctors: [],
             updatedAt: new Date().toISOString(),
@@ -823,32 +869,70 @@ export async function fetchDoctorUnlockedPatients(doctorId: string): Promise<any
     }
 
     const uniquePatientIds = Array.from(new Set(grantIds));
+    const allPatientIds = Array.from(new Set([...patientMap.keys(), ...uniquePatientIds]));
 
-    for (const patId of uniquePatientIds) {
-      if (!patientMap.has(patId)) {
-        const { data: profile } = await supabase
-          .from('profiles')
-          .select('*')
-          .eq('id', patId)
-          .maybeSingle();
+    if (allPatientIds.length > 0) {
+      const { data: dbProfiles } = await supabase
+        .from('profiles')
+        .select('*')
+        .in('id', allPatientIds);
 
-        if (profile) {
-          const pid = `PID-${profile.id.replace(/-/g, '').slice(0, 9).toUpperCase()}`;
+      if (Array.isArray(dbProfiles)) {
+        for (const profile of dbProfiles) {
+          const meta = (profile.metadata as Record<string, any>) || {};
+          let resolvedAge = meta.age ?? profile.age ?? null;
+          if (!resolvedAge && meta.date_of_birth) {
+            const dob = new Date(meta.date_of_birth);
+            if (!isNaN(dob.getTime())) {
+              resolvedAge = Math.floor((Date.now() - dob.getTime()) / (365.25 * 24 * 60 * 60 * 1000));
+            }
+          }
+          if (!resolvedAge) {
+            try {
+              const cachedAge = localStorage.getItem(`medconnect_patient_age_${profile.id}`);
+              if (cachedAge) resolvedAge = parseInt(cachedAge, 10);
+            } catch { /* ignore */ }
+          }
+          const finalAge = resolvedAge !== null && resolvedAge !== undefined && !isNaN(Number(resolvedAge)) ? Number(resolvedAge) : null;
+          const finalGender = meta.gender || profile.gender || 'Not specified';
+          const finalBlood = meta.blood_group || meta.bloodGroup || profile.blood_group || 'Not specified';
+
+          const existing = patientMap.get(profile.id) || {};
+          const pid = existing.pid || `PID-${profile.id.replace(/-/g, '').slice(0, 9).toUpperCase()}`;
+
           patientMap.set(profile.id, {
+            ...existing,
             id: profile.id,
-            name: profile.full_name || 'Patient',
+            name: profile.full_name || existing.name || 'Patient',
             pid,
-            age: (profile.metadata as any)?.age || profile.age || null,
-            gender: (profile.metadata as any)?.gender || profile.gender || 'Not specified',
-            bloodGroup: (profile.metadata as any)?.blood_group || 'Not specified',
-            phone: profile.phone || '',
-            email: profile.email || '',
-            allergies: [],
-            chronicConditions: [],
-            vitalsHistory: (profile.metadata as any)?.vitals_history || [],
-            lastVisit: 'Connected',
+            age: finalAge,
+            gender: finalGender,
+            bloodGroup: finalBlood,
+            phone: profile.phone || existing.phone || '',
+            email: profile.email || existing.email || '',
+            metadata: meta,
+            allergies: existing.allergies || [],
+            chronicConditions: existing.chronicConditions || [],
+            vitalsHistory: existing.vitalsHistory || (meta.vitals_history || []),
+            lastVisit: existing.lastVisit || 'Connected',
           });
         }
+      }
+    }
+
+    // Check localStorage fallback for any remaining patients
+    for (const p of patientMap.values()) {
+      if (p.age === null || p.age === undefined || p.age === 0) {
+        try {
+          const cached = localStorage.getItem(`medconnect_patient_age_${p.id}`);
+          if (cached) p.age = parseInt(cached, 10);
+        } catch { /* ignore */ }
+      }
+      if (!p.bloodGroup || p.bloodGroup === 'Not specified') {
+        try {
+          const cachedBlood = localStorage.getItem(`medconnect_patient_blood_${p.id}`);
+          if (cachedBlood) p.bloodGroup = cachedBlood;
+        } catch { /* ignore */ }
       }
     }
 

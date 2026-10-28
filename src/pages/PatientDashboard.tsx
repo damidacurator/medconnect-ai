@@ -359,17 +359,26 @@ export function PatientDashboard() {
       return;
     }
     try {
+      const parsedOnboardingAge = onboardingData.age ? parseInt(onboardingData.age, 10) : null;
       await updateProfile(user?.id || '', {
         full_name: onboardingData.fullName,
-        age: onboardingData.age ? parseInt(onboardingData.age, 10) : null,
+        age: parsedOnboardingAge,
         gender: onboardingData.gender,
         phone: onboardingData.phone,
+        blood_group: onboardingData.bloodGroup,
         metadata: {
+          age: parsedOnboardingAge,
+          gender: onboardingData.gender,
           blood_group: onboardingData.bloodGroup,
           emergency_contact: onboardingData.emergencyContact,
           patient_id: patientIdCode,
         },
       });
+      if (user?.id) {
+        if (parsedOnboardingAge !== null) localStorage.setItem(`medconnect_patient_age_${user.id}`, String(parsedOnboardingAge));
+        if (onboardingData.gender) localStorage.setItem(`medconnect_patient_gender_${user.id}`, onboardingData.gender);
+        if (onboardingData.bloodGroup) localStorage.setItem(`medconnect_patient_blood_${user.id}`, onboardingData.bloodGroup);
+      }
       await refreshProfile();
       setShowOnboarding(false);
       showToast('Profile Updated', 'Welcome to MedConnect AI! Your health records are ready.', 'success');
@@ -3713,11 +3722,13 @@ function ProfileSection({
         age: parsedAge,
         gender,
         phone,
+        blood_group: bloodGroup,
         metadata: fullMetadata,
       });
       if (user?.id) {
         if (parsedAge !== null) localStorage.setItem(`medconnect_patient_age_${user.id}`, String(parsedAge));
         if (gender) localStorage.setItem(`medconnect_patient_gender_${user.id}`, gender);
+        if (bloodGroup) localStorage.setItem(`medconnect_patient_blood_${user.id}`, bloodGroup);
       }
       onProfileUpdated();
       onShowToast('Biodata Saved to Cloud', 'Your complete medical and residential dossier has been persisted to Supabase.');
@@ -3784,7 +3795,17 @@ function ProfileSection({
               <input
                 type="date"
                 value={dateOfBirth}
-                onChange={e => setDateOfBirth(e.target.value)}
+                onChange={e => {
+                  const val = e.target.value;
+                  setDateOfBirth(val);
+                  if (val && !age) {
+                    const dob = new Date(val);
+                    if (!isNaN(dob.getTime())) {
+                      const calc = Math.floor((Date.now() - dob.getTime()) / (365.25 * 24 * 60 * 60 * 1000));
+                      if (calc >= 0 && calc <= 120) setAge(String(calc));
+                    }
+                  }
+                }}
                 className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-sm text-slate-100 focus:border-teal-400 outline-none"
               />
             </div>
