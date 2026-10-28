@@ -7,7 +7,6 @@ import {
   HeartPulse,
   Calendar,
   MessageSquare,
-  Sparkles,
   User,
   ShieldCheck,
   Settings,
@@ -92,7 +91,6 @@ type SectionId =
   | 'vitals'
   | 'appointments'
   | 'messages'
-  | 'ai'
   | 'profile'
   | 'access'
   | 'settings';
@@ -199,7 +197,6 @@ const SIDEBAR_ITEMS: SidebarItem[] = [
   { id: 'vitals', label: 'Vitals', icon: HeartPulse },
   { id: 'appointments', label: 'Appointments', icon: Calendar },
   { id: 'messages', label: 'Messages', icon: MessageSquare },
-  { id: 'ai', label: 'AI Assistant', icon: Sparkles },
   { id: 'profile', label: 'My Profile', icon: User },
   { id: 'access', label: 'Access Control', icon: ShieldCheck },
   { id: 'settings', label: 'Settings', icon: Settings },
@@ -916,17 +913,6 @@ export function PatientDashboard() {
                 />
               )}
 
-              {activeSection === 'ai' && (
-                <AIAssistantSection
-                  patientName={patientDisplayName}
-                  latestVitals={latestVitals}
-                  symptomsHistory={symptomsHistory}
-                  onShowToast={showToast}
-                  onBookAppointment={() => setActiveSection('appointments')}
-                  onNavigate={sec => setActiveSection(sec)}
-                />
-              )}
-
               {activeSection === 'profile' && (
                 <ProfileSection
                   user={user}
@@ -993,8 +979,8 @@ function OverviewSection({
         <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-6">
           <div className="space-y-2.5">
             <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-teal-500/20 border border-teal-500/30 text-teal-300 text-xs font-semibold">
-              <Sparkles className="w-3.5 h-3.5" />
-              AI Health Intelligence Active
+              <ShieldCheck className="w-3.5 h-3.5" />
+              Sovereign Clinical Records Active
             </div>
             <h2 className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight">
               Welcome back, {patientName}
@@ -1047,10 +1033,10 @@ function OverviewSection({
               <HeartPulse className="w-4 h-4 text-teal-400" /> Record Vitals
             </button>
             <button
-              onClick={() => onNavigate('ai')}
-              className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-cyan-600 to-teal-600 hover:from-cyan-500 hover:to-teal-500 text-white font-semibold text-xs transition flex items-center gap-2"
+              onClick={() => onNavigate('records')}
+              className="px-4 py-2.5 rounded-xl bg-slate-800/80 hover:bg-slate-800 text-slate-200 border border-slate-700/80 text-xs font-semibold transition flex items-center gap-2"
             >
-              <Sparkles className="w-4 h-4" /> AI Health Advisor
+              <FileText className="w-4 h-4 text-cyan-400" /> View EMR Records
             </button>
           </div>
         </div>
@@ -3297,322 +3283,7 @@ function MessagesSection({ userId, patientPid, patientName, onShowToast, onNavig
 }
 
 // ============================================================================
-// SUB-SECTION 7: AI ASSISTANT (MEDCONNECT AI HEALTH ADVISOR)
-// ============================================================================
-
-interface AIAssistantSectionProps {
-  patientName: string;
-  latestVitals: VitalsData | null;
-  symptomsHistory: any[];
-  onShowToast: (t: string, d?: string, type?: 'success' | 'info' | 'error') => void;
-  onBookAppointment: () => void;
-  onNavigate: (section: SectionId) => void;
-}
-
-function AIAssistantSection({
-  patientName,
-  latestVitals,
-  symptomsHistory,
-  onShowToast,
-  onBookAppointment,
-  onNavigate,
-}: AIAssistantSectionProps) {
-  const [analyzing, setAnalyzing] = useState(false);
-  const [hasAnalysis, setHasAnalysis] = useState(false);
-
-  const runAnalysis = () => {
-    setAnalyzing(true);
-    setHasAnalysis(false);
-    setTimeout(() => {
-      setAnalyzing(false);
-      setHasAnalysis(true);
-      if (latestVitals || symptomsHistory.length > 0) {
-        onShowToast('Analysis Complete', 'Clinical synthesis generated from your recorded logs.');
-      } else {
-        onShowToast('Notice', 'No vitals or symptoms logged yet to synthesize.', 'info');
-      }
-    }, 1500);
-  };
-
-  const sys = latestVitals?.systolic_bp;
-  const dia = latestVitals?.diastolic_bp;
-  const hr = latestVitals?.heart_rate;
-  const o2 = latestVitals?.oxygen_saturation;
-
-  let bpStatus = 'Normal Blood Pressure';
-  let bpDetail = 'Readings are within standard reference ranges.';
-  let isModerateRisk = false;
-
-  if (sys && dia) {
-    if (sys >= 140 || dia >= 90) {
-      bpStatus = 'Hypertension Stage 2 Range';
-      bpDetail = `Recorded ${sys}/${dia} mmHg. Significantly above standard guideline (<120/80 mmHg). Medical evaluation recommended.`;
-      isModerateRisk = true;
-    } else if (sys >= 130 || dia >= 80) {
-      bpStatus = 'Hypertension Stage 1 Range';
-      bpDetail = `Recorded ${sys}/${dia} mmHg. Mildly elevated. Daily tracking and sodium moderation recommended.`;
-      isModerateRisk = true;
-    } else if (sys >= 120) {
-      bpStatus = 'Elevated Blood Pressure';
-      bpDetail = `Recorded ${sys}/${dia} mmHg. Slightly above optimal resting baseline (<120/80 mmHg).`;
-    } else {
-      bpStatus = 'Optimal Resting Blood Pressure';
-      bpDetail = `Recorded ${sys}/${dia} mmHg. Within target resting limits (<120/80 mmHg).`;
-    }
-  }
-
-  let hrStatus = 'Resting Heart Rate';
-  let hrDetail = 'Within standard parameters.';
-  if (hr) {
-    if (hr > 100) {
-      hrStatus = `Elevated Pulse (${hr} bpm)`;
-      hrDetail = 'Resting heart rate exceeds 100 bpm. Ensure adequate hydration and rest.';
-      isModerateRisk = true;
-    } else if (hr < 60) {
-      hrStatus = `Resting Bradycardia (${hr} bpm)`;
-      hrDetail = 'Below typical resting rate. Often observed in endurance athletes; consult if experiencing lightheadedness.';
-    } else {
-      hrStatus = `Optimal Resting Pulse (${hr} bpm)`;
-      hrDetail = 'Comfortably within standard healthy adult range (60 - 100 bpm).';
-    }
-  }
-
-  return (
-    <div className="space-y-6">
-      {/* Top Banner with Action */}
-      <div className="rounded-3xl bg-gradient-to-r from-teal-950/50 via-slate-900 to-cyan-950/40 border border-teal-500/30 p-6 sm:p-8 backdrop-blur-xl relative overflow-hidden">
-        <div className="relative z-10 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div className="space-y-1">
-            <div className="inline-flex items-center gap-2 text-teal-400 text-xs font-semibold">
-              <Sparkles className="w-4 h-4" /> MedConnect Neural Health Advisor
-            </div>
-            <h2 className="text-xl font-bold text-white">AI Clinical Synthesis & Triage</h2>
-            <p className="text-xs text-slate-300 max-w-xl">
-              {latestVitals
-                ? `Cross-evaluates your active biometrics (BP ${latestVitals.systolic_bp || '--'}/${latestVitals.diastolic_bp || '--'} mmHg, HR ${latestVitals.heart_rate || '--'} bpm), logged symptoms, and medical history.`
-                : 'Cross-evaluates your recorded biometrics, logged symptoms, and medical history once you input your readings.'}
-            </p>
-          </div>
-
-          <button
-            onClick={runAnalysis}
-            disabled={analyzing}
-            className="px-6 py-3 rounded-2xl bg-gradient-to-r from-teal-400 via-cyan-400 to-teal-500 hover:from-teal-300 hover:to-cyan-300 text-slate-950 font-extrabold text-xs shadow-xl shadow-teal-500/20 transition flex items-center gap-2 self-start sm:self-auto disabled:opacity-50"
-          >
-            {analyzing ? (
-              <>
-                <RefreshCw className="w-4 h-4 animate-spin" /> Synthesizing Data...
-              </>
-            ) : (
-              <>
-                <Sparkles className="w-4 h-4" /> Analyze My Health
-              </>
-            )}
-          </button>
-        </div>
-      </div>
-
-      {/* Loading Skeleton */}
-      {analyzing && (
-        <div className="p-12 rounded-3xl bg-slate-900/40 border border-slate-800 animate-pulse text-center space-y-4">
-          <div className="w-12 h-12 rounded-full bg-teal-500/20 mx-auto flex items-center justify-center text-teal-300">
-            <RefreshCw className="w-6 h-6 animate-spin" />
-          </div>
-          <h3 className="text-base font-bold text-white">Synthesizing Clinical Signals...</h3>
-          <p className="text-xs text-slate-400 max-w-md mx-auto">
-            Correlating systolic and diastolic pressure, resting pulse, recorded symptoms, and clinical guidelines.
-          </p>
-        </div>
-      )}
-
-      {/* Initial state before analysis */}
-      {!hasAnalysis && !analyzing && (
-        <div className="p-12 rounded-3xl bg-slate-900/40 border border-slate-800/80 text-center space-y-4">
-          <Sparkles className="w-10 h-10 text-teal-400 mx-auto opacity-70" />
-          <h3 className="text-base font-bold text-white">AI Health Advisor Ready</h3>
-          <p className="text-xs text-slate-400 max-w-md mx-auto">
-            {latestVitals || symptomsHistory.length > 0
-              ? 'Click "Analyze My Health" above to cross-reference your recorded vitals and symptoms against clinical guidelines.'
-              : 'Record your baseline vitals or log current symptoms to enable your personalized clinical AI synthesis.'}
-          </p>
-          {!latestVitals && (
-            <button
-              onClick={() => onNavigate('vitals')}
-              className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-teal-500 hover:bg-teal-400 text-slate-950 font-bold text-xs shadow-md transition"
-            >
-              <Activity className="w-3.5 h-3.5" /> Record Baseline Vitals
-            </button>
-          )}
-        </div>
-      )}
-
-      {/* Analysis Output */}
-      {hasAnalysis && !analyzing && (
-        <div className="space-y-6">
-          {!latestVitals && symptomsHistory.length === 0 ? (
-            <div className="p-12 rounded-3xl bg-slate-900/40 border border-slate-800 text-center space-y-3">
-              <AlertCircle className="w-10 h-10 text-amber-400 mx-auto" />
-              <h3 className="text-base font-bold text-white">No Clinical Data on Record</h3>
-              <p className="text-xs text-slate-400 max-w-md mx-auto">
-                MedConnect AI evaluates verified biometric readings rather than hypothetical estimates. Please record your vitals or log symptoms to generate a real assessment.
-              </p>
-              <button
-                onClick={() => onNavigate('vitals')}
-                className="mt-2 inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-teal-500 hover:bg-teal-400 text-slate-950 font-bold text-xs shadow-md transition"
-              >
-                <Activity className="w-3.5 h-3.5" /> Record Vitals Now
-              </button>
-            </div>
-          ) : (
-            <>
-              {/* Urgency Badge Alert */}
-              <div className={cn(
-                'p-4 rounded-2xl border flex items-center justify-between',
-                isModerateRisk
-                  ? 'bg-amber-500/10 border-amber-500/30'
-                  : 'bg-emerald-500/10 border-emerald-500/30'
-              )}>
-                <div className="flex items-center gap-3">
-                  <span className={cn(
-                    'w-3 h-3 rounded-full animate-pulse',
-                    isModerateRisk ? 'bg-amber-400' : 'bg-emerald-400'
-                  )} />
-                  <div>
-                    <span className={cn(
-                      'text-xs font-bold uppercase tracking-wider block',
-                      isModerateRisk ? 'text-amber-300' : 'text-emerald-300'
-                    )}>
-                      {isModerateRisk ? 'Triage Status: Follow-Up Recommended' : 'Triage Status: Routine / Non-Urgent Care'}
-                    </span>
-                    <span className="text-xs text-slate-300">
-                      {isModerateRisk
-                        ? 'One or more biometric values fall outside ideal target ranges. Review the recommendations below.'
-                        : 'No acute distress signals detected. Biometrics fall within standard clinical limits.'}
-                    </span>
-                  </div>
-                </div>
-                <span className={cn(
-                  'text-[11px] font-semibold px-3 py-1 rounded-full border',
-                  isModerateRisk
-                    ? 'text-amber-400 bg-amber-500/20 border-amber-500/40'
-                    : 'text-emerald-400 bg-emerald-500/20 border-emerald-500/40'
-                )}>
-                  {isModerateRisk ? 'Review Needed' : 'Low Risk'}
-                </span>
-              </div>
-
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                {/* Physiological Observations */}
-                <div className="rounded-3xl bg-slate-900/60 border border-slate-800/80 p-6 backdrop-blur-xl space-y-5">
-                  <h3 className="font-bold text-white text-base">Recorded Biometric Observations</h3>
-                  <div className="space-y-4">
-                    {/* BP */}
-                    <div className="space-y-1.5 p-3.5 rounded-2xl bg-white/5 border border-white/10">
-                      <div className="flex justify-between text-xs">
-                        <span className="font-semibold text-slate-200">{bpStatus}</span>
-                        <span className="font-bold text-teal-400">{sys && dia ? `${sys}/${dia} mmHg` : 'Not Logged'}</span>
-                      </div>
-                      <p className="text-[11px] text-slate-400">{bpDetail}</p>
-                    </div>
-
-                    {/* HR */}
-                    <div className="space-y-1.5 p-3.5 rounded-2xl bg-white/5 border border-white/10">
-                      <div className="flex justify-between text-xs">
-                        <span className="font-semibold text-slate-200">{hrStatus}</span>
-                        <span className="font-bold text-cyan-400">{hr ? `${hr} bpm` : 'Not Logged'}</span>
-                      </div>
-                      <p className="text-[11px] text-slate-400">{hrDetail}</p>
-                    </div>
-
-                    {/* Oxygen */}
-                    {o2 && (
-                      <div className="space-y-1.5 p-3.5 rounded-2xl bg-white/5 border border-white/10">
-                        <div className="flex justify-between text-xs">
-                          <span className="font-semibold text-slate-200">Blood Oxygen Saturation</span>
-                          <span className="font-bold text-teal-400">{o2}% SpO2</span>
-                        </div>
-                        <p className="text-[11px] text-slate-400">
-                          {o2 >= 95 ? 'Normal arterial oxygenation.' : 'Slightly sub-optimal. Seek clinical review if persistent.'}
-                        </p>
-                      </div>
-                    )}
-
-                    {/* Symptoms */}
-                    {symptomsHistory.length > 0 && (
-                      <div className="space-y-1.5 p-3.5 rounded-2xl bg-white/5 border border-white/10">
-                        <span className="font-semibold text-slate-200 text-xs block">Active Symptoms</span>
-                        <div className="flex flex-wrap gap-1.5 pt-1">
-                          {symptomsHistory.map((s, idx) => (
-                            <span key={idx} className="text-[10px] px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 border border-slate-700">
-                              {s.symptom_type} ({s.severity})
-                            </span>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                {/* Recommendations & Red Flags */}
-                <div className="rounded-3xl bg-slate-900/60 border border-slate-800/80 p-6 backdrop-blur-xl flex flex-col justify-between space-y-4">
-                  <div>
-                    <h3 className="font-bold text-white text-base mb-3">Actionable Health Guidance</h3>
-                    <ul className="space-y-2.5 text-xs text-slate-300">
-                      <li className="flex items-start gap-2">
-                        <CheckCircle2 className="w-4 h-4 text-teal-400 flex-shrink-0 mt-0.5" />
-                        <span>Maintain regular hydration with 2 to 3 liters of water daily.</span>
-                      </li>
-                      <li className="flex items-start gap-2">
-                        <CheckCircle2 className="w-4 h-4 text-teal-400 flex-shrink-0 mt-0.5" />
-                        <span>Log readings at the same time each morning for reliable trending.</span>
-                      </li>
-                      {isModerateRisk && (
-                        <li className="flex items-start gap-2">
-                          <CheckCircle2 className="w-4 h-4 text-teal-400 flex-shrink-0 mt-0.5" />
-                          <span>Reduce dietary sodium intake and log morning/evening blood pressure readings.</span>
-                        </li>
-                      )}
-                    </ul>
-
-                    <div className="mt-5 pt-4 border-t border-slate-800/80">
-                      <h4 className="text-xs font-bold text-rose-400 flex items-center gap-1.5">
-                        <AlertTriangle className="w-3.5 h-3.5" /> When to Seek Immediate Medical Care:
-                      </h4>
-                      <p className="text-[11px] text-slate-400 mt-1">
-                        Chest pain or pressure, severe shortness of breath, sudden weakness or numbness on one side of body, sudden difficulty speaking, or sudden loss of vision.
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="pt-4 border-t border-slate-800 flex items-center justify-between">
-                    <span className="text-xs text-slate-400">Need professional medical care?</span>
-                    <button
-                      onClick={onBookAppointment}
-                      className="px-4 py-2 rounded-xl bg-teal-500 hover:bg-teal-400 text-slate-950 font-bold text-xs shadow transition"
-                    >
-                      Book Consultation
-                    </button>
-                  </div>
-                </div>
-              </div>
-
-              {/* Prominent Medical Disclaimer Banner */}
-              <div className="p-4 rounded-2xl bg-slate-900 border border-slate-800 flex items-start gap-3 text-xs text-slate-400">
-                <Info className="w-4 h-4 text-teal-400 flex-shrink-0 mt-0.5" />
-                <p className="leading-relaxed">
-                  <strong className="text-slate-200">Clinical Disclaimer:</strong> MedConnect AI provides health synthesis for informational and triage purposes only. It does not replace certified physician evaluation, formal diagnosis, or medical prescription. If you are experiencing a medical emergency, contact emergency medical services immediately.
-                </p>
-              </div>
-            </>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ============================================================================
-// SUB-SECTION 8: MY PROFILE
+// SUB-SECTION 7: MY PROFILE
 // ============================================================================
 
 interface ProfileSectionProps {

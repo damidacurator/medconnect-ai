@@ -7,7 +7,6 @@ import {
   FileText,
   Calendar,
   MessageSquare,
-  Bot,
   Clock,
   UserCheck,
   Settings,
@@ -34,9 +33,8 @@ import {
   Phone,
   Mail,
   ShieldAlert,
-  Sparkles,
+  ShieldCheck,
   TrendingUp,
-  BrainCircuit,
   Filter,
   RefreshCw,
   Video,
@@ -469,21 +467,6 @@ export function DoctorDashboard() {
   const [followUpDate, setFollowUpDate] = useState('');
   const [followUpNotes, setFollowUpNotes] = useState('');
 
-  // AI Workspace State
-  const [aiSelectedPatientId, setAiSelectedPatientId] = useState<string>('');
-  const [aiAnalysisLoading, setAiAnalysisLoading] = useState(false);
-  const [aiRiskData, setAiRiskData] = useState<{
-    cardio: number;
-    sepsis: number;
-    readmit: number;
-    recommendations: string[];
-  } | null>(null);
-  const [drugA, setDrugA] = useState('');
-  const [drugB, setDrugB] = useState('');
-  const [interactionResult, setInteractionResult] = useState<string | null>(null);
-  const [aiNoteRawText, setAiNoteRawText] = useState('');
-  const [extractedAiNote, setExtractedAiNote] = useState<any | null>(null);
-
   // Initialize consultation with queue patient if requested
   const handleStartConsultationForPatient = (patient: Patient) => {
     setSelectedPatientForConsult(patient);
@@ -662,46 +645,6 @@ export function DoctorDashboard() {
     setActiveTab('records');
   };
 
-  // Run AI Risk Analysis
-  const handleRunAiAnalysis = () => {
-    setAiAnalysisLoading(true);
-    setTimeout(() => {
-      setAiRiskData({
-        cardio: 28,
-        sepsis: 4,
-        readmit: 12,
-        recommendations: [
-          'High compliance with antihypertensive agent indicates stable cardiovascular trajectory.',
-          'Consider routine microalbuminuria screening given borderline systolic trends.',
-          'Advise dietary sodium restriction (<2,000 mg/day) and structured aerobic conditioning.'
-        ]
-      });
-      setAiAnalysisLoading(false);
-    }, 1200);
-  };
-
-  // Run AI Drug Interaction Checker
-  const handleCheckInteraction = () => {
-    setInteractionResult(
-      `Analyzed: ${drugA} + ${drugB}\nResult: [Moderate Interaction Risk] Concomitant use of ACE inhibitors (${drugA}) and potassium-sparing diuretics (${drugB}) may produce severe hyperkalemia. Frequent monitoring of serum potassium and renal function is advised.`
-    );
-  };
-
-  // Run AI Clinical Note Extraction
-  const handleExtractNote = () => {
-    setAiAnalysisLoading(true);
-    setTimeout(() => {
-      setExtractedAiNote({
-        chiefComplaint: 'Morning occipital throbbing headache (2 weeks duration)',
-        hpi: 'Patient denies blurred vision or nausea. Onset gradual, primarily early morning.',
-        vitalsExtracted: { bp: '138/88 mmHg', hr: '78 bpm' },
-        suspectedICD10: ['G44.209 (Tension-type headache)', 'I10 (Essential Hypertension)'],
-        suggestedOrders: ['Serum Electrolytes & Creatinine', 'Amlodipine 5mg oral daily', 'Home blood pressure log']
-      });
-      setAiAnalysisLoading(false);
-    }, 1400);
-  };
-
   // Send message using real Supabase & local cache
   const handleSendMessage = async () => {
     if (!chatInput.trim() || !user?.id || !selectedChatPatientId || isSendingMessage) return;
@@ -763,7 +706,6 @@ export function DoctorDashboard() {
     { id: 'records', label: 'Patient Records', icon: FileText },
     { id: 'appointments', label: 'Appointments', icon: Calendar },
     { id: 'messages', label: 'Messages', icon: MessageSquare, badge: unreadMessagesCount > 0 ? unreadMessagesCount : undefined },
-    { id: 'ai', label: 'AI Workspace', icon: Bot, isSparkle: true },
     { id: 'schedule', label: 'Schedule', icon: Clock },
     { id: 'profile', label: 'My Profile', icon: UserCheck },
     { id: 'settings', label: 'Settings', icon: Settings }
@@ -903,8 +845,7 @@ export function DoctorDashboard() {
                 <Icon
                   className={cn(
                     'w-5 h-5 shrink-0 transition-colors',
-                    isActive ? 'text-teal-400' : 'text-slate-400 group-hover:text-slate-200',
-                    item.isSparkle && 'text-cyan-400 animate-pulse'
+                    isActive ? 'text-teal-400' : 'text-slate-400 group-hover:text-slate-200'
                   )}
                 />
                 {sidebarOpen && <span className="truncate">{item.label}</span>}
@@ -1133,29 +1074,6 @@ export function DoctorDashboard() {
                 onSendTemplate={sendQuickTemplate}
                 onDeleteMessage={handleDeleteMessage}
                 onClearChat={handleClearChat}
-                onOpenUnlockModal={() => setIsUnlockModalOpen(true)}
-              />
-            )}
-
-            {activeTab === 'ai' && (
-              <AiWorkspaceSection
-                key="ai"
-                patients={patients}
-                selectedPatientId={aiSelectedPatientId || (patients[0]?.id || '')}
-                setSelectedPatientId={setAiSelectedPatientId}
-                loading={aiAnalysisLoading}
-                riskData={aiRiskData}
-                onRunRiskAnalysis={handleRunAiAnalysis}
-                drugA={drugA}
-                setDrugA={setDrugA}
-                drugB={drugB}
-                setDrugB={setDrugB}
-                interactionResult={interactionResult}
-                onCheckInteraction={handleCheckInteraction}
-                rawNote={aiNoteRawText}
-                setRawNote={setAiNoteRawText}
-                extractedNote={extractedAiNote}
-                onExtractNote={handleExtractNote}
                 onOpenUnlockModal={() => setIsUnlockModalOpen(true)}
               />
             )}
@@ -1445,7 +1363,7 @@ function OverviewSection({
           </div>
         </div>
 
-        {/* Quick Actions & AI Assistant Widget */}
+        {/* Quick Actions & Clinical Workflow Widget */}
         <div className="space-y-6">
           <div className="p-5 rounded-2xl bg-white/[0.03] border border-white/10 backdrop-blur-md">
             <h3 className="text-base font-semibold text-white mb-3">Clinical Quick Actions</h3>
@@ -1460,12 +1378,12 @@ function OverviewSection({
               </button>
 
               <button
-                onClick={() => onNavigateTab('ai')}
+                onClick={() => onNavigateTab('queue')}
                 className="p-3 rounded-xl bg-white/[0.02] border border-white/5 hover:border-cyan-500/30 text-left transition group"
               >
-                <Bot className="w-5 h-5 text-cyan-400 mb-2 group-hover:scale-110 transition-transform" />
-                <p className="text-xs font-semibold text-slate-200">AI Assistant</p>
-                <p className="text-[10px] text-slate-400">Risk & drug review</p>
+                <Users className="w-5 h-5 text-cyan-400 mb-2 group-hover:scale-110 transition-transform" />
+                <p className="text-xs font-semibold text-slate-200">Patient Queue</p>
+                <p className="text-[10px] text-slate-400">Triage & active list</p>
               </button>
 
               <button
@@ -1488,26 +1406,26 @@ function OverviewSection({
             </div>
           </div>
 
-          {/* AI Daily Insight Card */}
-          <div className="p-5 rounded-2xl bg-gradient-to-br from-teal-950/40 to-cyan-950/30 border border-teal-500/30 relative overflow-hidden">
+          {/* NDPR & Sovereign Clinical Compliance Card */}
+          <div className="p-5 rounded-2xl bg-gradient-to-br from-teal-950/40 to-slate-900/60 border border-teal-500/30 relative overflow-hidden">
             <div className="flex items-center gap-2 text-teal-300 font-semibold text-sm mb-2">
-              <Sparkles className="w-4 h-4 text-teal-400" />
-              <span>AI Clinical Triage Alert</span>
+              <ShieldCheck className="w-4 h-4 text-teal-400" />
+              <span>NDPR & Sovereign Clinical Compliance</span>
             </div>
             {patients.length > 0 ? (
               <p className="text-xs text-slate-300 leading-relaxed">
-                Connected with {patients[0].name} ({patients[0].pid}). Vitals baseline, clinical notes, and pharmacological risk analysis available in AI Workspace.
+                Active chart unlocked for {patients[0].name} ({patients[0].pid}). Sovereign patient consent is verified. Direct physician consultations, vitals monitoring, and accredited clinical records are encrypted.
               </p>
             ) : (
               <p className="text-xs text-slate-300 leading-relaxed">
-                No active clinical triage alerts. Connect with a patient using their permanent Patient ID (PID) to monitor vital trajectories and run AI clinical decision support.
+                Sovereign privacy controls active. Patients grant clinical access directly via their Patient ID (PID) without unauthorized automated or unverified third-party processing.
               </p>
             )}
             <button
-              onClick={() => onNavigateTab('ai')}
-              className="mt-3 text-xs font-semibold text-teal-400 hover:text-teal-300 flex items-center gap-1"
+              onClick={() => onNavigateTab('records')}
+              className="mt-3 text-xs font-semibold text-teal-400 hover:text-teal-300 flex items-center gap-1 cursor-pointer"
             >
-              Open AI Workspace <ArrowRight className="w-3.5 h-3.5" />
+              Access Patient Records <ArrowRight className="w-3.5 h-3.5" />
             </button>
           </div>
         </div>
@@ -1519,6 +1437,30 @@ function OverviewSection({
 // ----------------------------------------------------------------------
 // Sub-component 2: Patient Queue
 // ----------------------------------------------------------------------
+function getPatientAgeString(p: any): string {
+  if (!p) return 'Age not recorded';
+  if (p.age && Number(p.age) > 0) return `${p.age}y`;
+  const mAge = (p.metadata as any)?.age;
+  if (mAge && Number(mAge) > 0) return `${mAge}y`;
+  if (typeof window !== 'undefined' && p.id) {
+    const cached = localStorage.getItem(`medconnect_patient_age_${p.id}`);
+    if (cached && parseInt(cached, 10) > 0) return `${cached}y`;
+  }
+  return 'Age not recorded';
+}
+
+function getPatientBloodString(p: any): string {
+  if (!p) return 'Not specified';
+  if (p.bloodGroup && p.bloodGroup !== 'Not specified' && p.bloodGroup !== 'Blood: N/A') return p.bloodGroup;
+  const mBlood = (p.metadata as any)?.blood_group || (p.metadata as any)?.bloodGroup;
+  if (mBlood && mBlood !== 'Not specified') return mBlood;
+  if (typeof window !== 'undefined' && p.id) {
+    const cached = localStorage.getItem(`medconnect_patient_blood_${p.id}`);
+    if (cached && cached !== 'Not specified') return cached;
+  }
+  return 'Not specified';
+}
+
 function PatientQueueSection({
   appointments,
   patients,
@@ -1618,9 +1560,9 @@ function PatientQueueSection({
 
                     {patient && (
                       <div className="flex flex-wrap items-center gap-4 mt-2 text-xs text-slate-400">
-                        <span>Age: {patient.age && patient.age > 0 ? `${patient.age}y` : 'Age N/A'}</span>
+                        <span>Age: {getPatientAgeString(patient)}</span>
                         <span>Gender: {patient.gender}</span>
-                        <span>Blood Group: {patient.bloodGroup}</span>
+                        <span>Blood Group: {getPatientBloodString(patient)}</span>
                         {patient.allergies.length > 0 && (
                           <span className="text-rose-400 font-medium flex items-center gap-1">
                             <AlertTriangle className="w-3 h-3" /> Allergy:{' '}
@@ -1813,7 +1755,7 @@ function ConsultationFlowSection({
                   <div>
                     <h5 className="font-semibold text-white text-sm">{p.name}</h5>
                     <p className="text-xs text-slate-400 mt-0.5">
-                      {p.age && p.age > 0 ? `${p.age}y` : 'Age N/A'} • {p.gender} • Blood Group: {p.bloodGroup || 'Not specified'}
+                      {getPatientAgeString(p)} • {p.gender} • Blood Group: {getPatientBloodString(p)}
                     </p>
                     <p className="text-[11px] font-mono text-teal-400 mt-1">{p.pid}</p>
                   </div>
@@ -2356,13 +2298,44 @@ function PatientRecordsSection({
     let isMounted = true;
     async function fetchLivePatientProfile() {
       try {
-        const { data: prof } = await supabase
-          .from('profiles')
-          .select('*')
-          .eq('id', patient.id)
-          .maybeSingle();
+        let prof: any = null;
+        const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(patient.id || '');
+        if (isUUID) {
+          const { data } = await supabase
+            .from('profiles')
+            .select('*')
+            .eq('id', patient.id)
+            .maybeSingle();
+          prof = data;
+        }
+
+        // If not found by direct UUID, query profiles to match PID, email, or name
+        if (!prof) {
+          const cleanPid = (patient.pid || '').replace(/^PID-/, '').replace(/-/g, '').toUpperCase();
+          const cleanId = (patient.id || '').replace(/^PID-/, '').replace(/-/g, '').toUpperCase();
+          const { data: allProfs } = await supabase
+            .from('profiles')
+            .select('*');
+          if (Array.isArray(allProfs)) {
+            prof = allProfs.find((p: any) => {
+              const pIdRaw = (p.id || '').replace(/-/g, '').toUpperCase();
+              const pPid = `PID-${pIdRaw.slice(0, 9)}`;
+              return (
+                p.id === patient.id ||
+                pPid === patient.pid?.toUpperCase() ||
+                (cleanPid.length >= 6 && pIdRaw.startsWith(cleanPid)) ||
+                (cleanId.length >= 6 && pIdRaw.startsWith(cleanId)) ||
+                (patient.email && p.email && p.email.toLowerCase() === patient.email.toLowerCase()) ||
+                (patient.name && p.full_name && patient.name.toLowerCase() === p.full_name.toLowerCase())
+              );
+            });
+          }
+        }
 
         if (isMounted && prof) {
+          if (prof.id && patient.id !== prof.id) {
+            patient.id = prof.id;
+          }
           const meta = (prof.metadata as Record<string, any>) || {};
           let a = meta.age ?? prof.age ?? null;
           if (!a && meta.date_of_birth) {
@@ -2373,7 +2346,8 @@ function PatientRecordsSection({
           }
           if (!a) {
             try {
-              const cached = localStorage.getItem(`medconnect_patient_age_${patient.id}`);
+              const cached = localStorage.getItem(`medconnect_patient_age_${prof.id}`) ||
+                localStorage.getItem(`medconnect_patient_age_${patient.id}`);
               if (cached) a = parseInt(cached, 10);
             } catch { /* ignore */ }
           }
@@ -2388,15 +2362,22 @@ function PatientRecordsSection({
             phone: prof.phone || patient.phone,
             email: prof.email || patient.email,
           });
+          if (parsedA !== null) patient.age = parsedA;
+          if (g && g !== 'Not specified') patient.gender = g;
+          if (b && b !== 'Not specified') patient.bloodGroup = b;
         } else if (isMounted) {
           const cached = localStorage.getItem(`medconnect_patient_age_${patient.id}`);
           const cachedBlood = localStorage.getItem(`medconnect_patient_blood_${patient.id}`);
-          if (cached || cachedBlood) {
+          const cachedGender = localStorage.getItem(`medconnect_patient_gender_${patient.id}`);
+          if (cached || cachedBlood || cachedGender) {
+            const parsedCachedAge = cached ? parseInt(cached, 10) : (patient.age > 0 ? patient.age : null);
             setLiveDemographics({
-              age: cached ? parseInt(cached, 10) : (patient.age > 0 ? patient.age : null),
-              gender: patient.gender,
+              age: parsedCachedAge,
+              gender: cachedGender || patient.gender,
               bloodGroup: cachedBlood || patient.bloodGroup,
             });
+            if (parsedCachedAge !== null) patient.age = parsedCachedAge;
+            if (cachedBlood) patient.bloodGroup = cachedBlood;
           }
         }
       } catch (e) {
@@ -2541,11 +2522,15 @@ function PatientRecordsSection({
         }
 
         // 2. Check profiles.metadata.vitals_history (guaranteed accessible across all authenticated roles)
-        const { data: pProfile } = await supabase
-          .from('profiles')
-          .select('metadata')
-          .eq('id', patient.id)
-          .maybeSingle();
+        let pProfile: any = null;
+        if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(patient.id || '')) {
+          const { data } = await supabase
+            .from('profiles')
+            .select('metadata')
+            .eq('id', patient.id)
+            .maybeSingle();
+          pProfile = data;
+        }
 
         const metaHistory = (pProfile?.metadata as any)?.vitals_history;
         if (isMounted && Array.isArray(metaHistory) && metaHistory.length > 0) {
@@ -2760,7 +2745,7 @@ function PatientRecordsSection({
                               <div className="min-w-0">
                                 <p className="text-xs font-semibold text-white truncate">{p.name}</p>
                                 <p className="text-[10px] text-slate-400 font-mono">
-                                  {p.pid} • {p.age && p.age > 0 ? `${p.age}y` : 'Age N/A'} {p.gender}
+                                  {p.pid} • {getPatientAgeString(p)} • {p.gender}
                                 </p>
                               </div>
                             </div>
@@ -2847,7 +2832,7 @@ function PatientRecordsSection({
                       <p className="text-xs font-bold text-white truncate">{p.name}</p>
                       <p className="text-[10px] text-teal-300 font-mono truncate">{p.pid}</p>
                       <p className="text-[10px] text-slate-400">
-                        {p.age && p.age > 0 ? `${p.age}y` : 'Age N/A'} • {p.gender} • {p.bloodGroup || 'Blood: N/A'}
+                        {getPatientAgeString(p)} • {p.gender} • {getPatientBloodString(p)}
                       </p>
                     </div>
                   </div>
@@ -3798,343 +3783,7 @@ function MessagesSection({
 }
 
 // ----------------------------------------------------------------------
-// Sub-component 7: AI Clinical Workspace
-// ----------------------------------------------------------------------
-function AiWorkspaceSection({
-  patients,
-  selectedPatientId,
-  setSelectedPatientId,
-  loading,
-  riskData,
-  onRunRiskAnalysis,
-  drugA,
-  setDrugA,
-  drugB,
-  setDrugB,
-  interactionResult,
-  onCheckInteraction,
-  rawNote,
-  setRawNote,
-  extractedNote,
-  onExtractNote,
-  onOpenUnlockModal
-}: any) {
-  if (!patients || patients.length === 0) {
-    return (
-      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6">
-        <div className="p-6 rounded-3xl bg-gradient-to-r from-teal-950/60 via-cyan-950/40 to-[#0a1224] border border-cyan-500/30 backdrop-blur-md">
-          <div className="flex items-center gap-3 text-cyan-300 font-bold text-lg mb-2">
-            <BrainCircuit className="w-6 h-6 text-cyan-400" />
-            <span>AI Clinical Decision Support Engine</span>
-          </div>
-          <p className="text-xs text-slate-300 max-w-2xl leading-relaxed">
-            The MedConnect AI Assistant provides clinical decision support for attending physicians. It performs automated 3-bullet patient chart rundowns, evaluates real-time cardiovascular and sepsis risks from logged vitals, flags dangerous drug-drug contraindications, and formats free-text notes into accredited EMR documentation.
-          </p>
-        </div>
-
-        <div className="p-12 rounded-3xl bg-white/[0.02] border border-white/10 text-center space-y-4">
-          <div className="w-16 h-16 rounded-2xl bg-cyan-500/10 border border-cyan-500/20 text-cyan-400 flex items-center justify-center mx-auto">
-            <Sparkles className="w-8 h-8" />
-          </div>
-          <div className="space-y-1">
-            <h3 className="text-lg font-bold text-white">No Patient Selected for Clinical Analysis</h3>
-            <p className="text-xs text-slate-400 max-w-md mx-auto leading-relaxed">
-              To run patient-specific diagnostic summaries, risk assessments, and medication reviews, link to a patient record using their permanent Patient ID (PID).
-            </p>
-          </div>
-          <button
-            onClick={onOpenUnlockModal}
-            className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-teal-500 to-cyan-500 text-slate-950 font-bold text-xs shadow-md shadow-teal-500/20 transition flex items-center gap-2 mx-auto"
-          >
-            <Key className="w-4 h-4" />
-            <span>Unlock Patient via Patient ID</span>
-          </button>
-        </div>
-
-        {/* Pharmacological and Clinical Note tools remain usable */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <div className="p-5 rounded-2xl bg-white/[0.03] border border-white/10 backdrop-blur-md space-y-4">
-            <h4 className="text-sm font-bold text-white flex items-center gap-2">
-              <Pill className="w-4 h-4 text-amber-400" />
-              <span>Drug-Drug Interaction Checker</span>
-            </h4>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="block text-[11px] text-slate-400 mb-1">Drug #1</label>
-                <input
-                  type="text"
-                  placeholder="e.g. Warfarin"
-                  value={drugA}
-                  onChange={e => setDrugA(e.target.value)}
-                  className="w-full px-3 py-2 rounded-xl bg-white/5 border border-white/10 text-white text-xs"
-                />
-              </div>
-              <div>
-                <label className="block text-[11px] text-slate-400 mb-1">Drug #2</label>
-                <input
-                  type="text"
-                  placeholder="e.g. Aspirin"
-                  value={drugB}
-                  onChange={e => setDrugB(e.target.value)}
-                  className="w-full px-3 py-2 rounded-xl bg-white/5 border border-white/10 text-white text-xs"
-                />
-              </div>
-            </div>
-            <button
-              onClick={onCheckInteraction}
-              className="w-full py-2 rounded-xl bg-amber-500/20 border border-amber-500/30 text-amber-300 text-xs font-semibold hover:bg-amber-500/30"
-            >
-              Check Cross-Reactivity
-            </button>
-            {interactionResult && (
-              <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-xs text-amber-200 whitespace-pre-line leading-relaxed">
-                {interactionResult}
-              </div>
-            )}
-          </div>
-
-          <div className="p-5 rounded-2xl bg-white/[0.03] border border-white/10 backdrop-blur-md space-y-4">
-            <div className="flex items-center justify-between">
-              <h4 className="text-sm font-bold text-white flex items-center gap-2">
-                <FilePlus className="w-4 h-4 text-teal-400" />
-                <span>AI Free-Text Note Structurer</span>
-              </h4>
-              <button
-                onClick={onExtractNote}
-                disabled={loading}
-                className="px-3 py-1 rounded-lg bg-teal-500 text-slate-950 text-xs font-bold hover:brightness-110 disabled:opacity-50"
-              >
-                {loading ? 'Extracting...' : 'Extract EMR'}
-              </button>
-            </div>
-            <textarea
-              rows={3}
-              placeholder="Paste raw physician dictation or consultation notes here..."
-              value={rawNote}
-              onChange={e => setRawNote(e.target.value)}
-              className="w-full px-3 py-2 rounded-xl bg-white/5 border border-white/10 text-white text-xs"
-            />
-            {extractedNote && (
-              <div className="p-4 rounded-xl bg-white/[0.02] border border-white/5 space-y-2 text-xs">
-                <p><strong className="text-teal-300">Complaint:</strong> {extractedNote.chiefComplaint}</p>
-                <p><strong className="text-teal-300">HPI:</strong> {extractedNote.hpi}</p>
-                <p><strong className="text-teal-300">ICD-10 Suggestions:</strong> {extractedNote.suspectedICD10.join(', ')}</p>
-                <p><strong className="text-teal-300">Recommended Orders:</strong> {extractedNote.suggestedOrders.join(', ')}</p>
-              </div>
-            )}
-          </div>
-        </div>
-      </motion.div>
-    );
-  }
-
-  const patient = patients.find((p: Patient) => p.id === selectedPatientId) || patients[0];
-
-  return (
-    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6">
-      {/* Header Banner */}
-      <div className="p-5 rounded-2xl bg-gradient-to-r from-teal-950/60 via-cyan-950/40 to-[#0a1224] border border-cyan-500/30 backdrop-blur-md flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <div className="flex items-center gap-2 text-cyan-300 font-bold text-base mb-1">
-            <BrainCircuit className="w-5 h-5 text-cyan-400" />
-            <span>AI Clinical Decision Support Engine</span>
-          </div>
-          <p className="text-xs text-slate-300">
-            Augmented diagnostic inference, drug-drug contraindication validation, and note structuring.
-          </p>
-        </div>
-
-        <div className="flex items-center gap-2">
-          <span className="text-xs text-slate-400">Target Patient:</span>
-          <select
-            value={selectedPatientId || patient.id}
-            onChange={e => setSelectedPatientId(e.target.value)}
-            className="px-3 py-1.5 rounded-xl bg-[#11192d] border border-cyan-500/30 text-cyan-200 text-xs"
-          >
-            {patients.map((p: Patient) => (
-              <option key={p.id} value={p.id}>
-                {p.name} ({p.pid})
-              </option>
-            ))}
-          </select>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* 1. Smart Patient Rundown */}
-        <div className="p-5 rounded-2xl bg-white/[0.03] border border-white/10 backdrop-blur-md space-y-3">
-          <div className="flex items-center justify-between">
-            <h4 className="text-sm font-bold text-white flex items-center gap-2">
-              <Sparkles className="w-4 h-4 text-teal-400" />
-              <span>Smart Patient Rundown (3-Bullet AI Summary)</span>
-            </h4>
-          </div>
-
-          <div className="p-4 rounded-xl bg-teal-500/5 border border-teal-500/20 space-y-2 text-xs text-slate-200 leading-relaxed">
-            <div className="flex items-start gap-2">
-              <span className="text-teal-400 font-bold">•</span>
-              <span>
-                <strong>Profile & Baselines:</strong> {patient.name}, {patient.age ? `${patient.age}y` : 'Age not recorded'}{' '}
-                {patient.gender || 'Not specified'}, diagnosed with{' '}
-                {patient.chronicConditions && patient.chronicConditions.length > 0
-                  ? patient.chronicConditions.join(', ')
-                  : 'no chronic illnesses recorded'}.
-              </span>
-            </div>
-            <div className="flex items-start gap-2">
-              <span className="text-teal-400 font-bold">•</span>
-              <span>
-                <strong>Vital Trajectory:</strong> Recent BP:{' '}
-                {patient.vitalsHistory && patient.vitalsHistory[0]?.bp
-                  ? `${patient.vitalsHistory[0].bp} mmHg`
-                  : 'No resting vitals recorded by patient yet'}.
-              </span>
-            </div>
-            <div className="flex items-start gap-2">
-              <span className="text-teal-400 font-bold">•</span>
-              <span>
-                <strong>Key Precautions:</strong> Flagged allergies:{' '}
-                {patient.allergies && patient.allergies.length > 0
-                  ? patient.allergies.map((a: any) => a.name).join(', ')
-                  : 'NKDA (No known drug allergies recorded)'}.
-              </span>
-            </div>
-          </div>
-        </div>
-
-        {/* 2. AI Risk Analysis */}
-        <div className="p-5 rounded-2xl bg-white/[0.03] border border-white/10 backdrop-blur-md space-y-3">
-          <div className="flex items-center justify-between">
-            <h4 className="text-sm font-bold text-white flex items-center gap-2">
-              <ShieldAlert className="w-4 h-4 text-cyan-400" />
-              <span>AI Risk Predictive Analysis</span>
-            </h4>
-            <button
-              onClick={onRunRiskAnalysis}
-              disabled={loading}
-              className="px-3 py-1 rounded-lg bg-cyan-500/20 border border-cyan-500/30 text-cyan-300 text-xs font-semibold hover:bg-cyan-500/30 disabled:opacity-50"
-            >
-              {loading ? 'Evaluating...' : 'Run Analysis'}
-            </button>
-          </div>
-
-          {riskData ? (
-            <div className="space-y-4">
-              <div className="grid grid-cols-3 gap-3">
-                <div className="p-3 rounded-xl bg-white/[0.02] border border-white/5 text-center">
-                  <p className="text-[11px] text-slate-400">Cardiovascular Risk</p>
-                  <p className="text-lg font-bold text-teal-400 mt-1">{riskData.cardio}%</p>
-                  <span className="text-[10px] text-teal-300">Moderate Low</span>
-                </div>
-                <div className="p-3 rounded-xl bg-white/[0.02] border border-white/5 text-center">
-                  <p className="text-[11px] text-slate-400">Sepsis Index</p>
-                  <p className="text-lg font-bold text-emerald-400 mt-1">{riskData.sepsis}%</p>
-                  <span className="text-[10px] text-emerald-300">Minimal</span>
-                </div>
-                <div className="p-3 rounded-xl bg-white/[0.02] border border-white/5 text-center">
-                  <p className="text-[11px] text-slate-400">30d Readmission</p>
-                  <p className="text-lg font-bold text-cyan-400 mt-1">{riskData.readmit}%</p>
-                  <span className="text-[10px] text-cyan-300">Low Risk</span>
-                </div>
-              </div>
-
-              <div className="space-y-1.5 text-xs text-slate-300">
-                {riskData.recommendations.map((rec: string, i: number) => (
-                  <p key={i} className="flex items-start gap-1.5">
-                    <Check className="w-3.5 h-3.5 text-teal-400 mt-0.5 shrink-0" />
-                    <span>{rec}</span>
-                  </p>
-                ))}
-              </div>
-            </div>
-          ) : (
-            <p className="text-xs text-slate-500 py-4 text-center">Click 'Run Analysis' to compute predictive clinical score.</p>
-          )}
-        </div>
-
-        {/* 3. Drug Interaction Checker */}
-        <div className="p-5 rounded-2xl bg-white/[0.03] border border-white/10 backdrop-blur-md space-y-4">
-          <h4 className="text-sm font-bold text-white flex items-center gap-2">
-            <Pill className="w-4 h-4 text-amber-400" />
-            <span>Drug-Drug Interaction Checker</span>
-          </h4>
-
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-[11px] text-slate-400 mb-1">Drug #1</label>
-              <input
-                type="text"
-                placeholder="e.g. Warfarin"
-                value={drugA}
-                onChange={e => setDrugA(e.target.value)}
-                className="w-full px-3 py-2 rounded-xl bg-white/5 border border-white/10 text-white text-xs"
-              />
-            </div>
-            <div>
-              <label className="block text-[11px] text-slate-400 mb-1">Drug #2</label>
-              <input
-                type="text"
-                placeholder="e.g. Aspirin"
-                value={drugB}
-                onChange={e => setDrugB(e.target.value)}
-                className="w-full px-3 py-2 rounded-xl bg-white/5 border border-white/10 text-white text-xs"
-              />
-            </div>
-          </div>
-
-          <button
-            onClick={onCheckInteraction}
-            className="w-full py-2 rounded-xl bg-amber-500/20 border border-amber-500/30 text-amber-300 text-xs font-semibold hover:bg-amber-500/30"
-          >
-            Check Cross-Reactivity
-          </button>
-
-          {interactionResult && (
-            <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-xs text-amber-200 whitespace-pre-line leading-relaxed">
-              {interactionResult}
-            </div>
-          )}
-        </div>
-
-        {/* 4. Clinical Note Extraction from Free Text */}
-        <div className="p-5 rounded-2xl bg-white/[0.03] border border-white/10 backdrop-blur-md space-y-4">
-          <div className="flex items-center justify-between">
-            <h4 className="text-sm font-bold text-white flex items-center gap-2">
-              <FilePlus className="w-4 h-4 text-teal-400" />
-              <span>AI Free-Text Note Structurer</span>
-            </h4>
-            <button
-              onClick={onExtractNote}
-              disabled={loading}
-              className="px-3 py-1 rounded-lg bg-teal-500 text-slate-950 text-xs font-bold hover:brightness-110 disabled:opacity-50"
-            >
-              {loading ? 'Extracting...' : 'Extract EMR'}
-            </button>
-          </div>
-
-          <textarea
-            rows={3}
-            value={rawNote}
-            onChange={e => setRawNote(e.target.value)}
-            className="w-full px-3 py-2 rounded-xl bg-white/5 border border-white/10 text-white text-xs"
-          />
-
-          {extractedNote && (
-            <div className="p-4 rounded-xl bg-white/[0.02] border border-white/5 space-y-2 text-xs">
-              <p><strong className="text-teal-300">Complaint:</strong> {extractedNote.chiefComplaint}</p>
-              <p><strong className="text-teal-300">HPI:</strong> {extractedNote.hpi}</p>
-              <p><strong className="text-teal-300">ICD-10 Suggestions:</strong> {extractedNote.suspectedICD10.join(', ')}</p>
-              <p><strong className="text-teal-300">Recommended Orders:</strong> {extractedNote.suggestedOrders.join(', ')}</p>
-            </div>
-          )}
-        </div>
-      </div>
-    </motion.div>
-  );
-}
-
-// ----------------------------------------------------------------------
-// Sub-component 8: Schedule Settings
+// Sub-component 7: Schedule Settings
 // ----------------------------------------------------------------------
 function ScheduleSection({ settings, setSettings, onSave }: any) {
   const days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
@@ -4429,10 +4078,10 @@ function SettingsSection({ doctorProfile, showToast }: any) {
 
           <div className="p-4 rounded-xl bg-white/[0.02] border border-white/5 flex items-center justify-between">
             <div>
-              <p className="font-semibold text-white">Diagnostic AI Confidence Threshold</p>
-              <p className="text-slate-400 text-[11px]">Minimum probability required before surfacing rare differential conditions</p>
+              <p className="font-semibold text-white">Clinical Biometric Alert Sensitivity</p>
+              <p className="text-slate-400 text-[11px]">Threshold for flagging abnormal blood pressure and oxygen saturation swings</p>
             </div>
-            <span className="font-mono text-cyan-300">85% (High Precision)</span>
+            <span className="font-mono text-cyan-300">High Clinical Sensitivity</span>
           </div>
         </div>
 

@@ -4,7 +4,6 @@ import { motion } from 'framer-motion';
 import {
   Activity,
   ArrowRight,
-  Brain,
   Building2,
   Calendar,
   CheckCircle2,
@@ -13,8 +12,8 @@ import {
   Lock,
   MessageCircle,
   Shield,
+  ShieldCheck,
   Smartphone,
-  Sparkles,
   Stethoscope,
   User,
 } from 'lucide-react';
@@ -85,14 +84,14 @@ export const Landing: React.FC = () => {
     {
       role: 'doctor' as UserRole,
       title: 'For Physicians',
-      badge: 'AI Clinical Workspace',
+      badge: 'Physician Clinical Suite',
       icon: Stethoscope,
       description:
-        'Intelligent clinical support powered by diagnostic AI, automated notes, instant cross-institution patient record access, and smart prescriptions.',
+        'Direct clinical workflow with longitudinal EMR charts, instant cross-institution patient record access, secure consultations, and lab/prescription ordering.',
       features: [
-        'AI diagnostic & symptom analysis',
-        'Automated EHR & consultation notes',
-        'Secure patient referrals & analytics',
+        'Universal EMR & clinical chart history',
+        'Consultation notes & prescription ledger',
+        'Secure patient referrals & triage analytics',
       ],
       gradient: 'from-blue-500/20 via-cyan-500/10 to-transparent',
       borderGlow: 'hover:border-blue-400/50',
@@ -124,10 +123,10 @@ export const Landing: React.FC = () => {
         'A single consolidated, tamper-proof longitudinal health profile aggregating immunizations, lab results, scans, and allergies across lifetime care.',
     },
     {
-      icon: Brain,
-      title: 'AI Clinical Assistant',
+      icon: ShieldCheck,
+      title: 'NDPR Sovereign Compliance',
       description:
-        'State-of-the-art medical reasoning model aiding clinical triage, spotting drug interactions, and summarizing complex multi-year case histories in seconds.',
+        'Full NDPR, HIPAA, and GDPR compliance with end-to-end patient consent verification, cryptographic PID isolation, and sovereign audit logs.',
     },
     {
       icon: MessageCircle,
@@ -243,8 +242,8 @@ export const Landing: React.FC = () => {
             transition={{ duration: 0.5 }}
             className="inline-flex items-center space-x-2 px-3.5 py-1.5 rounded-full bg-cyan-500/10 border border-cyan-500/25 text-cyan-300 text-xs sm:text-sm font-medium mb-6 shadow-sm"
           >
-            <Sparkles className="w-4 h-4 text-cyan-400" />
-            <span>Universal Medical Records Powered by Clinical AI</span>
+            <ShieldCheck className="w-4 h-4 text-cyan-400" />
+            <span>Universal Medical Records & Sovereign Clinical System</span>
           </motion.div>
 
           <motion.h1
@@ -265,7 +264,7 @@ export const Landing: React.FC = () => {
             transition={{ duration: 0.6, delay: 0.2 }}
             className="mt-6 text-base sm:text-xl text-slate-400 max-w-3xl mx-auto leading-relaxed"
           >
-            MedConnect AI breaks healthcare silos. Patients retain lifelong universal medical records, clinicians leverage instant diagnostic intelligence, and healthcare institutions streamline operations in real time.
+            MedConnect AI breaks healthcare silos. Patients retain lifelong universal medical records, clinicians access longitudinal charts instantly, and healthcare institutions streamline operations in real time.
           </motion.p>
 
           {/* Three Portals Grid - Directly in Front Page Hero */}
@@ -360,8 +359,8 @@ export const Landing: React.FC = () => {
               <div className="text-xs sm:text-sm text-slate-400 mt-1">Full Healthcare Compliance</div>
             </div>
             <div>
-              <div className="text-2xl sm:text-3xl font-extrabold text-teal-300">24/7 AI</div>
-              <div className="text-xs sm:text-sm text-slate-400 mt-1">Clinical Support Engine</div>
+              <div className="text-2xl sm:text-3xl font-extrabold text-teal-300">100% NDPR</div>
+              <div className="text-xs sm:text-sm text-slate-400 mt-1">Sovereign Patient Privacy</div>
             </div>
           </motion.div>
         </section>

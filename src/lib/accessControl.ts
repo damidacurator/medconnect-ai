@@ -868,54 +868,105 @@ export async function fetchDoctorUnlockedPatients(doctorId: string): Promise<any
       }
     }
 
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
     const uniquePatientIds = Array.from(new Set(grantIds));
     const allPatientIds = Array.from(new Set([...patientMap.keys(), ...uniquePatientIds]));
+    const validUuidIds = allPatientIds.filter(id => uuidRegex.test(id));
 
-    if (allPatientIds.length > 0) {
-      const { data: dbProfiles } = await supabase
+    let dbProfiles: any[] = [];
+    if (validUuidIds.length > 0) {
+      try {
+        const { data, error } = await supabase
+          .from('profiles')
+          .select('*')
+          .in('id', validUuidIds);
+        if (!error && Array.isArray(data)) {
+          dbProfiles = data;
+        }
+      } catch (err) {
+        console.warn('Profiles lookup by ID note:', err);
+      }
+    }
+
+    // Also fetch all patient profiles if some patient IDs were not UUIDs or not found yet
+    try {
+      const { data: allPatientProfiles } = await supabase
         .from('profiles')
-        .select('*')
-        .in('id', allPatientIds);
+        .select('*');
+      if (Array.isArray(allPatientProfiles)) {
+        for (const prof of allPatientProfiles) {
+          if (!dbProfiles.some(p => p.id === prof.id)) {
+            dbProfiles.push(prof);
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('Profiles full table scan note:', err);
+    }
 
-      if (Array.isArray(dbProfiles)) {
-        for (const profile of dbProfiles) {
-          const meta = (profile.metadata as Record<string, any>) || {};
-          let resolvedAge = meta.age ?? profile.age ?? null;
-          if (!resolvedAge && meta.date_of_birth) {
-            const dob = new Date(meta.date_of_birth);
-            if (!isNaN(dob.getTime())) {
-              resolvedAge = Math.floor((Date.now() - dob.getTime()) / (365.25 * 24 * 60 * 60 * 1000));
+    if (Array.isArray(dbProfiles) && dbProfiles.length > 0) {
+      for (const profile of dbProfiles) {
+        const meta = (profile.metadata as Record<string, any>) || {};
+        let resolvedAge = meta.age ?? profile.age ?? null;
+        if (!resolvedAge && meta.date_of_birth) {
+          const dob = new Date(meta.date_of_birth);
+          if (!isNaN(dob.getTime())) {
+            resolvedAge = Math.floor((Date.now() - dob.getTime()) / (365.25 * 24 * 60 * 60 * 1000));
+          }
+        }
+        if (!resolvedAge) {
+          try {
+            const cachedAge = localStorage.getItem(`medconnect_patient_age_${profile.id}`);
+            if (cachedAge) resolvedAge = parseInt(cachedAge, 10);
+          } catch { /* ignore */ }
+        }
+        const finalAge = resolvedAge !== null && resolvedAge !== undefined && !isNaN(Number(resolvedAge)) ? Number(resolvedAge) : null;
+        const finalGender = meta.gender || profile.gender || 'Not specified';
+        const finalBlood = meta.blood_group || meta.bloodGroup || profile.blood_group || 'Not specified';
+
+        const profilePid = `PID-${(profile.id || '').replace(/-/g, '').slice(0, 9).toUpperCase()}`;
+
+        // Find if this profile matches any entry in patientMap (by UUID, by PID, by email, by name)
+        let matchingKey = profile.id;
+        if (!patientMap.has(matchingKey)) {
+          for (const [k, p] of patientMap.entries()) {
+            const cleanKey = k.replace(/^PID-/, '').replace(/-/g, '').toUpperCase();
+            const cleanProfId = (profile.id || '').replace(/-/g, '').toUpperCase();
+            if (
+              p.pid?.toUpperCase() === profilePid ||
+              (cleanKey.length >= 6 && cleanProfId.startsWith(cleanKey)) ||
+              (p.email && profile.email && p.email.toLowerCase() === profile.email.toLowerCase()) ||
+              (p.name && profile.full_name && p.name.toLowerCase() === profile.full_name.toLowerCase())
+            ) {
+              matchingKey = k;
+              break;
             }
           }
-          if (!resolvedAge) {
-            try {
-              const cachedAge = localStorage.getItem(`medconnect_patient_age_${profile.id}`);
-              if (cachedAge) resolvedAge = parseInt(cachedAge, 10);
-            } catch { /* ignore */ }
-          }
-          const finalAge = resolvedAge !== null && resolvedAge !== undefined && !isNaN(Number(resolvedAge)) ? Number(resolvedAge) : null;
-          const finalGender = meta.gender || profile.gender || 'Not specified';
-          const finalBlood = meta.blood_group || meta.bloodGroup || profile.blood_group || 'Not specified';
+        }
 
-          const existing = patientMap.get(profile.id) || {};
-          const pid = existing.pid || `PID-${profile.id.replace(/-/g, '').slice(0, 9).toUpperCase()}`;
+        const existing = patientMap.get(matchingKey) || {};
+        const pid = existing.pid || profilePid;
 
-          patientMap.set(profile.id, {
-            ...existing,
-            id: profile.id,
-            name: profile.full_name || existing.name || 'Patient',
-            pid,
-            age: finalAge,
-            gender: finalGender,
-            bloodGroup: finalBlood,
-            phone: profile.phone || existing.phone || '',
-            email: profile.email || existing.email || '',
-            metadata: meta,
-            allergies: existing.allergies || [],
-            chronicConditions: existing.chronicConditions || [],
-            vitalsHistory: existing.vitalsHistory || (meta.vitals_history || []),
-            lastVisit: existing.lastVisit || 'Connected',
-          });
+        const updatedEntry = {
+          ...existing,
+          id: profile.id, // Store real Supabase UUID
+          name: profile.full_name || existing.name || 'Patient',
+          pid,
+          age: finalAge,
+          gender: finalGender,
+          bloodGroup: finalBlood,
+          phone: profile.phone || existing.phone || '',
+          email: profile.email || existing.email || '',
+          metadata: meta,
+          allergies: existing.allergies || [],
+          chronicConditions: existing.chronicConditions || [],
+          vitalsHistory: existing.vitalsHistory || (meta.vitals_history || []),
+          lastVisit: existing.lastVisit || 'Connected',
+        };
+
+        patientMap.set(profile.id, updatedEntry);
+        if (matchingKey !== profile.id) {
+          patientMap.delete(matchingKey);
         }
       }
     }

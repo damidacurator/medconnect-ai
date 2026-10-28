@@ -785,6 +785,38 @@ export async function saveConsultationRecord(record: ConsultationRecord): Promis
     created_at: record.created_at || timestamp,
   };
 
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  let realPatientId = enriched.patientId;
+  let realDoctorId = enriched.doctorId;
+
+  // Resolve real patient UUID if patientId is a PID or custom string
+  if (!uuidRegex.test(realPatientId)) {
+    const cleanPid = (enriched.pid || enriched.patientId || '').replace(/^PID-/, '').replace(/-/g, '').toUpperCase();
+    try {
+      const { data: profs } = await supabase.from('profiles').select('id, metadata');
+      if (Array.isArray(profs)) {
+        const match = profs.find((p: any) => {
+          const raw = (p.id || '').replace(/-/g, '').toUpperCase();
+          const pPid = `PID-${raw.slice(0, 9)}`;
+          return pPid === cleanPid || raw.startsWith(cleanPid) || (p.metadata as any)?.patient_id === cleanPid;
+        });
+        if (match) {
+          realPatientId = match.id;
+        }
+      }
+    } catch { /* ignore */ }
+  }
+
+  // Resolve real doctor UUID if doctorId is doc-1 or non-UUID
+  if (!uuidRegex.test(realDoctorId)) {
+    try {
+      const authUser = await getCurrentUser();
+      if (authUser?.id && uuidRegex.test(authUser.id)) {
+        realDoctorId = authUser.id;
+      }
+    } catch { /* ignore */ }
+  }
+
   // 1. Local Cache (instant multi-device & offline guarantee)
   try {
     // Save to master all list
@@ -808,6 +840,12 @@ export async function saveConsultationRecord(record: ConsultationRecord): Promis
       pList.unshift(enriched);
     }
     localStorage.setItem(pKey, JSON.stringify(pList));
+    if (realPatientId && realPatientId !== enriched.patientId) {
+      localStorage.setItem(`medconnect_consultations_${realPatientId}`, JSON.stringify(pList));
+    }
+    if (enriched.pid) {
+      localStorage.setItem(`medconnect_consultations_${enriched.pid}`, JSON.stringify(pList));
+    }
 
     // Save to doctor specific list
     const dKey = `medconnect_consultations_doctor_${enriched.doctorId}`;
@@ -819,116 +857,130 @@ export async function saveConsultationRecord(record: ConsultationRecord): Promis
       dList.unshift(enriched);
     }
     localStorage.setItem(dKey, JSON.stringify(dList));
+    if (realDoctorId && realDoctorId !== enriched.doctorId) {
+      localStorage.setItem(`medconnect_consultations_doctor_${realDoctorId}`, JSON.stringify(dList));
+    }
   } catch (storageErr) {
     console.warn('Local storage consultation cache error:', storageErr);
   }
 
   // 2. Mirror into patient profiles.metadata.consultation_records
-  try {
-    const { data: pProfile } = await supabase
-      .from('profiles')
-      .select('metadata')
-      .eq('id', enriched.patientId)
-      .maybeSingle();
+  const targetPatId = realPatientId || enriched.patientId;
+  if (uuidRegex.test(targetPatId)) {
+    try {
+      const { data: pProfile } = await supabase
+        .from('profiles')
+        .select('metadata')
+        .eq('id', targetPatId)
+        .maybeSingle();
 
-    const existingMeta = (pProfile?.metadata as Record<string, any>) || {};
-    const existingConsults = Array.isArray(existingMeta.consultation_records) ? existingMeta.consultation_records : [];
-    const updatedConsults = [enriched, ...existingConsults.filter((c: any) => c.id !== enriched.id && c.emrCode !== enriched.emrCode)].slice(0, 50);
+      const existingMeta = (pProfile?.metadata as Record<string, any>) || {};
+      const existingConsults = Array.isArray(existingMeta.consultation_records) ? existingMeta.consultation_records : [];
+      const updatedConsults = [enriched, ...existingConsults.filter((c: any) => c.id !== enriched.id && c.emrCode !== enriched.emrCode)].slice(0, 50);
 
-    // Also mirror prescriptions list into patient metadata
-    const existingRx = Array.isArray(existingMeta.prescriptions) ? existingMeta.prescriptions : [];
-    const newRx = (enriched.prescriptions || []).map(rx => ({
-      ...rx,
-      id: rx.id || `rx-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
-      doctor: enriched.doctorName,
-      date: enriched.date,
-      emrCode: enriched.emrCode,
-      status: 'Active',
-    }));
-    const updatedRx = [...newRx, ...existingRx].slice(0, 50);
+      // Also mirror prescriptions list into patient metadata
+      const existingRx = Array.isArray(existingMeta.prescriptions) ? existingMeta.prescriptions : [];
+      const newRx = (enriched.prescriptions || []).map(rx => ({
+        ...rx,
+        id: rx.id || `rx-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+        doctor: enriched.doctorName,
+        date: enriched.date,
+        emrCode: enriched.emrCode,
+        status: 'Active',
+      }));
+      const updatedRx = [...newRx, ...existingRx].slice(0, 50);
 
-    // Also mirror lab orders into patient metadata
-    const existingLabs = Array.isArray(existingMeta.lab_orders) ? existingMeta.lab_orders : [];
-    const newLabs = (enriched.labOrders || []).map(l => ({
-      ...l,
-      id: l.id || `lab-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
-      doctor: enriched.doctorName,
-      date: enriched.date,
-      emrCode: enriched.emrCode,
-      status: 'Ordered',
-    }));
-    const updatedLabs = [...newLabs, ...existingLabs].slice(0, 50);
-
-    await supabase.from('profiles').update({
-      metadata: {
-        ...existingMeta,
-        latest_consultation: enriched,
-        consultation_records: updatedConsults,
-        prescriptions: updatedRx,
-        lab_orders: updatedLabs,
-      },
-    }).eq('id', enriched.patientId);
-  } catch (profErr) {
-    console.warn('Profile consultation metadata sync error:', profErr);
-  }
-
-  // 3. Mirror into doctor profiles.metadata.doctor_consultation_records
-  try {
-    const { data: dProfile } = await supabase
-      .from('profiles')
-      .select('metadata')
-      .eq('id', enriched.doctorId)
-      .maybeSingle();
-
-    if (dProfile) {
-      const existingDocMeta = (dProfile.metadata as Record<string, any>) || {};
-      const existingDocConsults = Array.isArray(existingDocMeta.doctor_consultation_records) ? existingDocMeta.doctor_consultation_records : [];
-      const updatedDocConsults = [enriched, ...existingDocConsults.filter((c: any) => c.id !== enriched.id && c.emrCode !== enriched.emrCode)].slice(0, 100);
+      // Also mirror lab orders into patient metadata
+      const existingLabs = Array.isArray(existingMeta.lab_orders) ? existingMeta.lab_orders : [];
+      const newLabs = (enriched.labOrders || []).map(l => ({
+        ...l,
+        id: l.id || `lab-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+        doctor: enriched.doctorName,
+        date: enriched.date,
+        emrCode: enriched.emrCode,
+        status: 'Ordered',
+      }));
+      const updatedLabs = [...newLabs, ...existingLabs].slice(0, 50);
 
       await supabase.from('profiles').update({
         metadata: {
-          ...existingDocMeta,
-          doctor_consultation_records: updatedDocConsults,
+          ...existingMeta,
+          latest_consultation: enriched,
+          consultation_records: updatedConsults,
+          prescriptions: updatedRx,
+          lab_orders: updatedLabs,
         },
-      }).eq('id', enriched.doctorId);
+      }).eq('id', targetPatId);
+    } catch (profErr) {
+      console.warn('Profile consultation metadata sync error:', profErr);
     }
-  } catch (docProfErr) {
-    console.warn('Doctor profile consultation sync error:', docProfErr);
   }
 
-  // 4. Insert into dedicated Supabase tables (consultations, prescriptions, lab_orders)
-  try {
-    await supabase.from('consultations').insert({
-      id: enriched.id,
-      emr_code: enriched.emrCode,
-      patient_id: enriched.patientId,
-      doctor_id: enriched.doctorId,
-      chief_complaint: enriched.chiefComplaint,
-      diagnosis: Array.isArray(enriched.diagnoses) ? enriched.diagnoses.join(', ') : enriched.diagnoses,
-      treatment_plan: enriched.treatmentPlan,
-      vitals: enriched.vitals,
-      notes: enriched.treatmentPlan || enriched.chiefComplaint,
-      created_at: enriched.created_at,
-    });
-  } catch (cloudErr) {
-    console.warn('Supabase consultations table insert note:', cloudErr);
-  }
-
-  if (enriched.prescriptions && enriched.prescriptions.length > 0) {
+  // 3. Mirror into doctor profiles.metadata.doctor_consultation_records
+  const targetDocId = realDoctorId || enriched.doctorId;
+  if (uuidRegex.test(targetDocId)) {
     try {
-      const rxRows = enriched.prescriptions.map(p => ({
-        patient_id: enriched.patientId,
-        doctor_id: enriched.doctorId,
-        medication_name: p.medication,
-        dosage: p.dosage,
-        frequency: p.frequency,
-        duration: p.duration,
-        instructions: p.instructions || '',
-        status: 'active',
-      }));
-      await supabase.from('prescriptions').insert(rxRows as any);
-    } catch (rxErr) {
-      console.warn('Supabase prescriptions table insert note:', rxErr);
+      const { data: dProfile } = await supabase
+        .from('profiles')
+        .select('metadata')
+        .eq('id', targetDocId)
+        .maybeSingle();
+
+      if (dProfile) {
+        const existingDocMeta = (dProfile.metadata as Record<string, any>) || {};
+        const existingDocConsults = Array.isArray(existingDocMeta.doctor_consultation_records) ? existingDocMeta.doctor_consultation_records : [];
+        const updatedDocConsults = [enriched, ...existingDocConsults.filter((c: any) => c.id !== enriched.id && c.emrCode !== enriched.emrCode)].slice(0, 100);
+
+        await supabase.from('profiles').update({
+          metadata: {
+            ...existingDocMeta,
+            doctor_consultation_records: updatedDocConsults,
+          },
+        }).eq('id', targetDocId);
+      }
+    } catch (docProfErr) {
+      console.warn('Doctor profile consultation sync error:', docProfErr);
+    }
+  }
+
+  // 4. Insert into dedicated Supabase tables (consultations, prescriptions)
+  if (uuidRegex.test(realPatientId) && uuidRegex.test(realDoctorId)) {
+    const consultationUuid = uuidRegex.test(enriched.id) ? enriched.id : crypto.randomUUID();
+    try {
+      await supabase.from('consultations').insert({
+        id: consultationUuid,
+        patient_id: realPatientId,
+        doctor_id: realDoctorId,
+        chief_complaint: enriched.chiefComplaint || 'Clinical Consultation',
+        diagnosis: Array.isArray(enriched.diagnoses) ? enriched.diagnoses.join(', ') : (enriched.diagnoses || 'General Assessment'),
+        treatment_plan: enriched.treatmentPlan || '',
+        follow_up_date: enriched.followUpDate || null,
+        doctor_notes: JSON.stringify(enriched),
+        status: 'completed',
+        created_at: enriched.created_at,
+        updated_at: enriched.created_at,
+      });
+    } catch (cloudErr) {
+      console.warn('Supabase consultations table insert note:', cloudErr);
+    }
+
+    if (enriched.prescriptions && enriched.prescriptions.length > 0) {
+      try {
+        const rxRows = enriched.prescriptions.map(p => ({
+          patient_id: realPatientId,
+          doctor_id: realDoctorId,
+          consultation_id: consultationUuid,
+          medication_name: p.medication,
+          dosage: p.dosage,
+          frequency: p.frequency,
+          duration: p.duration,
+          instructions: p.instructions || '',
+          status: 'active',
+        }));
+        await supabase.from('prescriptions').insert(rxRows as any);
+      } catch (rxErr) {
+        console.warn('Supabase prescriptions table insert note:', rxErr);
+      }
     }
   }
 
@@ -942,76 +994,129 @@ export async function getPatientConsultations(patientId: string): Promise<Consul
   if (!patientId) return [];
 
   const foundMap = new Map<string, ConsultationRecord>();
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  let resolvedUuid = uuidRegex.test(patientId) ? patientId : '';
+
+  // If patientId is a PID, resolve real profile UUID
+  if (!resolvedUuid) {
+    const cleanPid = patientId.replace(/^PID-/, '').replace(/-/g, '').toUpperCase();
+    try {
+      const { data: profs } = await supabase.from('profiles').select('id, metadata');
+      if (Array.isArray(profs)) {
+        const match = profs.find((p: any) => {
+          const raw = (p.id || '').replace(/-/g, '').toUpperCase();
+          const pPid = `PID-${raw.slice(0, 9)}`;
+          return pPid === cleanPid || raw.startsWith(cleanPid) || (p.metadata as any)?.patient_id === cleanPid;
+        });
+        if (match) {
+          resolvedUuid = match.id;
+        }
+      }
+    } catch { /* ignore */ }
+  }
+
+  const queryIds = Array.from(new Set([patientId, resolvedUuid].filter(Boolean)));
 
   // 1. Try querying Supabase consultations table
-  try {
-    const { data: cRows, error: cErr } = await supabase
-      .from('consultations')
-      .select('*')
-      .eq('patient_id', patientId)
-      .order('created_at', { ascending: false });
+  for (const qId of queryIds) {
+    if (uuidRegex.test(qId)) {
+      try {
+        const { data: cRows, error: cErr } = await supabase
+          .from('consultations')
+          .select('*')
+          .eq('patient_id', qId)
+          .order('created_at', { ascending: false });
 
-    if (!cErr && Array.isArray(cRows)) {
-      for (const row of cRows) {
-        const key = row.emr_code || row.id;
-        foundMap.set(key, {
-          id: row.id,
-          emrCode: row.emr_code || `EMR-${row.id.slice(0, 8).toUpperCase()}`,
-          patientId: row.patient_id,
-          patientName: row.patient_name || 'Patient',
-          pid: `PID-${row.patient_id.replace(/-/g, '').slice(0, 9).toUpperCase()}`,
-          doctorId: row.doctor_id || 'doc-1',
-          doctorName: row.doctor_name || 'Attending Physician',
-          date: row.created_at ? row.created_at.split('T')[0] : new Date().toISOString().split('T')[0],
-          chiefComplaint: row.chief_complaint || '',
-          diagnoses: row.diagnosis ? row.diagnosis.split(', ') : ['General Health Assessment'],
-          treatmentPlan: row.treatment_plan || row.doctor_notes || '',
-          prescriptions: row.prescriptions || [],
-          labOrders: row.lab_orders || [],
-          vitals: row.vitals || {},
-          created_at: row.created_at,
-        });
+        if (!cErr && Array.isArray(cRows)) {
+          for (const row of cRows) {
+            let parsedNotes: any = {};
+            try {
+              if (row.doctor_notes && (row.doctor_notes.startsWith('{') || row.doctor_notes.startsWith('['))) {
+                parsedNotes = JSON.parse(row.doctor_notes);
+              }
+            } catch { /* ignore */ }
+
+            const key = parsedNotes.emrCode || row.emr_code || row.id;
+            foundMap.set(key, {
+              id: row.id,
+              emrCode: parsedNotes.emrCode || row.emr_code || `EMR-${row.id.slice(0, 8).toUpperCase()}`,
+              patientId: row.patient_id,
+              patientName: parsedNotes.patientName || row.patient_name || 'Patient',
+              pid: parsedNotes.pid || `PID-${row.patient_id.replace(/-/g, '').slice(0, 9).toUpperCase()}`,
+              doctorId: row.doctor_id || 'doc-1',
+              doctorName: parsedNotes.doctorName || row.doctor_name || 'Attending Physician',
+              date: parsedNotes.date || (row.created_at ? row.created_at.split('T')[0] : new Date().toISOString().split('T')[0]),
+              chiefComplaint: parsedNotes.chiefComplaint || row.chief_complaint || '',
+              diagnoses: parsedNotes.diagnoses || (row.diagnosis ? row.diagnosis.split(', ') : ['General Health Assessment']),
+              treatmentPlan: parsedNotes.treatmentPlan || row.treatment_plan || row.doctor_notes || '',
+              prescriptions: parsedNotes.prescriptions || row.prescriptions || [],
+              labOrders: parsedNotes.labOrders || row.lab_orders || [],
+              vitals: parsedNotes.vitals || row.vitals || {},
+              created_at: row.created_at,
+            });
+          }
+        }
+      } catch (err) {
+        console.warn('Error querying consultations table:', err);
       }
     }
-  } catch (err) {
-    console.warn('Error querying consultations table:', err);
   }
 
   // 2. Query patient profiles.metadata.consultation_records
-  try {
-    const { data: prof } = await supabase
-      .from('profiles')
-      .select('metadata')
-      .eq('id', patientId)
-      .maybeSingle();
+  for (const qId of queryIds) {
+    if (uuidRegex.test(qId)) {
+      try {
+        const { data: prof } = await supabase
+          .from('profiles')
+          .select('metadata')
+          .eq('id', qId)
+          .maybeSingle();
 
-    const metaList = (prof?.metadata as any)?.consultation_records;
-    if (Array.isArray(metaList)) {
-      for (const item of metaList) {
+        const metaList = (prof?.metadata as any)?.consultation_records;
+        if (Array.isArray(metaList)) {
+          for (const item of metaList) {
+            const key = item.emrCode || item.id;
+            if (!foundMap.has(key)) {
+              foundMap.set(key, item);
+            }
+          }
+        }
+      } catch (err) {
+        console.warn('Error querying patient profile consultation metadata:', err);
+      }
+    }
+  }
+
+  // 3. Fallback to localStorage
+  try {
+    const keysToCheck = [
+      `medconnect_consultations_${patientId}`,
+      resolvedUuid ? `medconnect_consultations_${resolvedUuid}` : null,
+      patientId.startsWith('PID-') ? `medconnect_consultations_${patientId}` : `medconnect_consultations_PID-${patientId.replace(/-/g, '').slice(0, 9).toUpperCase()}`,
+    ].filter(Boolean) as string[];
+
+    for (const pKey of keysToCheck) {
+      const pList = JSON.parse(localStorage.getItem(pKey) || '[]');
+      for (const item of pList) {
         const key = item.emrCode || item.id;
         if (!foundMap.has(key)) {
           foundMap.set(key, item);
         }
       }
     }
-  } catch (err) {
-    console.warn('Error querying patient profile consultation metadata:', err);
-  }
 
-  // 3. Fallback to localStorage
-  try {
-    const pKey = `medconnect_consultations_${patientId}`;
-    const pList = JSON.parse(localStorage.getItem(pKey) || '[]');
-    for (const item of pList) {
-      const key = item.emrCode || item.id;
-      if (!foundMap.has(key)) {
-        foundMap.set(key, item);
-      }
-    }
-
+    const cleanInput = patientId.replace(/^PID-/, '').replace(/-/g, '').toUpperCase();
     const allList = JSON.parse(localStorage.getItem('medconnect_consultations_all') || '[]');
     for (const item of allList) {
-      if (item.patientId === patientId) {
+      const itemPid = (item.pid || '').replace(/^PID-/, '').replace(/-/g, '').toUpperCase();
+      const itemPatId = (item.patientId || '').replace(/^PID-/, '').replace(/-/g, '').toUpperCase();
+      if (
+        item.patientId === patientId ||
+        (resolvedUuid && item.patientId === resolvedUuid) ||
+        itemPid === cleanInput ||
+        itemPatId === cleanInput ||
+        (cleanInput.length >= 6 && (itemPid.startsWith(cleanInput) || itemPatId.startsWith(cleanInput)))
+      ) {
         const key = item.emrCode || item.id;
         if (!foundMap.has(key)) {
           foundMap.set(key, item);
@@ -1031,60 +1136,72 @@ export async function getDoctorConsultations(doctorId: string): Promise<Consulta
   if (!doctorId) return [];
 
   const foundMap = new Map<string, ConsultationRecord>();
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
   // 1. Try querying Supabase consultations table
-  try {
-    const { data: cRows, error: cErr } = await supabase
-      .from('consultations')
-      .select('*')
-      .eq('doctor_id', doctorId)
-      .order('created_at', { ascending: false });
+  if (uuidRegex.test(doctorId)) {
+    try {
+      const { data: cRows, error: cErr } = await supabase
+        .from('consultations')
+        .select('*')
+        .eq('doctor_id', doctorId)
+        .order('created_at', { ascending: false });
 
-    if (!cErr && Array.isArray(cRows)) {
-      for (const row of cRows) {
-        const key = row.emr_code || row.id;
-        foundMap.set(key, {
-          id: row.id,
-          emrCode: row.emr_code || `EMR-${row.id.slice(0, 8).toUpperCase()}`,
-          patientId: row.patient_id,
-          patientName: row.patient_name || 'Patient',
-          pid: `PID-${row.patient_id.replace(/-/g, '').slice(0, 9).toUpperCase()}`,
-          doctorId: row.doctor_id || doctorId,
-          doctorName: row.doctor_name || 'Attending Physician',
-          date: row.created_at ? row.created_at.split('T')[0] : new Date().toISOString().split('T')[0],
-          chiefComplaint: row.chief_complaint || '',
-          diagnoses: row.diagnosis ? row.diagnosis.split(', ') : ['General Health Assessment'],
-          treatmentPlan: row.treatment_plan || row.doctor_notes || '',
-          prescriptions: row.prescriptions || [],
-          labOrders: row.lab_orders || [],
-          vitals: row.vitals || {},
-          created_at: row.created_at,
-        });
+      if (!cErr && Array.isArray(cRows)) {
+        for (const row of cRows) {
+          let parsedNotes: any = {};
+          try {
+            if (row.doctor_notes && (row.doctor_notes.startsWith('{') || row.doctor_notes.startsWith('['))) {
+              parsedNotes = JSON.parse(row.doctor_notes);
+            }
+          } catch { /* ignore */ }
+
+          const key = parsedNotes.emrCode || row.emr_code || row.id;
+          foundMap.set(key, {
+            id: row.id,
+            emrCode: parsedNotes.emrCode || row.emr_code || `EMR-${row.id.slice(0, 8).toUpperCase()}`,
+            patientId: row.patient_id,
+            patientName: parsedNotes.patientName || row.patient_name || 'Patient',
+            pid: parsedNotes.pid || `PID-${row.patient_id.replace(/-/g, '').slice(0, 9).toUpperCase()}`,
+            doctorId: row.doctor_id || doctorId,
+            doctorName: parsedNotes.doctorName || row.doctor_name || 'Attending Physician',
+            date: parsedNotes.date || (row.created_at ? row.created_at.split('T')[0] : new Date().toISOString().split('T')[0]),
+            chiefComplaint: parsedNotes.chiefComplaint || row.chief_complaint || '',
+            diagnoses: parsedNotes.diagnoses || (row.diagnosis ? row.diagnosis.split(', ') : ['General Health Assessment']),
+            treatmentPlan: parsedNotes.treatmentPlan || row.treatment_plan || row.doctor_notes || '',
+            prescriptions: parsedNotes.prescriptions || row.prescriptions || [],
+            labOrders: parsedNotes.labOrders || row.lab_orders || [],
+            vitals: parsedNotes.vitals || row.vitals || {},
+            created_at: row.created_at,
+          });
+        }
       }
+    } catch (err) {
+      console.warn('Error querying doctor consultations table:', err);
     }
-  } catch (err) {
-    console.warn('Error querying doctor consultations table:', err);
   }
 
   // 2. Query doctor profiles.metadata.doctor_consultation_records
-  try {
-    const { data: prof } = await supabase
-      .from('profiles')
-      .select('metadata')
-      .eq('id', doctorId)
-      .maybeSingle();
+  if (uuidRegex.test(doctorId)) {
+    try {
+      const { data: prof } = await supabase
+        .from('profiles')
+        .select('metadata')
+        .eq('id', doctorId)
+        .maybeSingle();
 
-    const metaList = (prof?.metadata as any)?.doctor_consultation_records;
-    if (Array.isArray(metaList)) {
-      for (const item of metaList) {
-        const key = item.emrCode || item.id;
-        if (!foundMap.has(key)) {
-          foundMap.set(key, item);
+      const metaList = (prof?.metadata as any)?.doctor_consultation_records;
+      if (Array.isArray(metaList)) {
+        for (const item of metaList) {
+          const key = item.emrCode || item.id;
+          if (!foundMap.has(key)) {
+            foundMap.set(key, item);
+          }
         }
       }
+    } catch (err) {
+      console.warn('Error querying doctor profile consultation metadata:', err);
     }
-  } catch (err) {
-    console.warn('Error querying doctor profile metadata:', err);
   }
 
   // 3. Fallback to localStorage
@@ -1100,7 +1217,7 @@ export async function getDoctorConsultations(doctorId: string): Promise<Consulta
 
     const allList = JSON.parse(localStorage.getItem('medconnect_consultations_all') || '[]');
     for (const item of allList) {
-      if (item.doctorId === doctorId) {
+      if (item.doctorId === doctorId || !doctorId || doctorId === 'doc-1') {
         const key = item.emrCode || item.id;
         if (!foundMap.has(key)) {
           foundMap.set(key, item);
@@ -1108,7 +1225,7 @@ export async function getDoctorConsultations(doctorId: string): Promise<Consulta
       }
     }
   } catch (err) {
-    console.warn('Error reading doctor local consultations:', err);
+    console.warn('Error reading local doctor consultation storage:', err);
   }
 
   return Array.from(foundMap.values()).sort(

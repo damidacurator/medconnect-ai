@@ -27,7 +27,6 @@ import {
   Phone,
   Mail,
   ShieldCheck,
-  Sparkles,
   TrendingUp,
   Filter,
   RefreshCw,
@@ -103,8 +102,8 @@ export interface PatientRecord {
   lastVisit: string;
   department: string;
   assignedDoctor: string;
-  aiRiskLevel: 'normal' | 'moderate' | 'critical';
-  aiRiskReason?: string;
+  triageStatus: 'normal' | 'moderate' | 'critical';
+  triageNotes?: string;
   historicalVitals: Array<{
     recordedAt: string;
     systolicBp: number;
@@ -500,7 +499,7 @@ export function InstitutionDashboard() {
               lastVisit: pMeta.latest_consultation?.date || 'Recent',
               department: 'General Medicine',
               assignedDoctor: pMeta.latest_consultation?.doctorName || 'Attending Physician',
-              aiRiskLevel: 'normal',
+              triageStatus: 'normal',
               historicalVitals: Array.isArray(pMeta.vitals_history) ? pMeta.vitals_history : [],
               diagnoses: pMeta.latest_consultation?.diagnoses || ['General Health Assessment'],
             };
@@ -572,7 +571,7 @@ export function InstitutionDashboard() {
           setPrescriptions(prev => (prev.length === 0 ? mappedRx : prev));
         }
 
-        // Check health vitals for AI risk alerts
+        // Check health vitals for triage alerts
         const { data: dbVitals } = await supabase
           .from('health_vitals')
           .select('*')
@@ -638,7 +637,7 @@ export function InstitutionDashboard() {
     const activeDoctorsOnDuty = doctors.filter(d => d.status === 'on_duty').length;
     const todayStr = new Date().toISOString().split('T')[0];
     const appointmentsToday = appointments.filter(a => a.date === todayStr || a.date === 'Today').length;
-    const urgentAiAlerts = patients.filter(p => p.aiRiskLevel === 'critical').length +
+    const urgentTriageAlerts = patients.filter(p => p.triageStatus === 'critical').length +
       activityFeed.filter(a => a.type === 'alert' && a.severity === 'critical').length;
 
     return {
@@ -646,7 +645,7 @@ export function InstitutionDashboard() {
       activeDoctorsOnDuty,
       totalDoctors: doctors.length,
       appointmentsToday,
-      urgentAiAlerts,
+      urgentTriageAlerts,
     };
   }, [patients, doctors, appointments, activityFeed]);
 
@@ -674,7 +673,7 @@ export function InstitutionDashboard() {
     {
       group: 'OPERATIONS',
       items: [
-        { id: 'overview', label: 'Command Center', icon: LayoutDashboard, badge: metrics.urgentAiAlerts > 0 ? `${metrics.urgentAiAlerts} Alert` : undefined, badgeColor: 'bg-rose-500/20 text-rose-300' },
+        { id: 'overview', label: 'Command Center', icon: LayoutDashboard, badge: metrics.urgentTriageAlerts > 0 ? `${metrics.urgentTriageAlerts} Alert` : undefined, badgeColor: 'bg-rose-500/20 text-rose-300' },
         { id: 'appointments', label: 'Central Appointment Hub', icon: Calendar, badge: appointments.length > 0 ? appointments.length : undefined },
       ],
     },
@@ -1214,7 +1213,7 @@ interface ModuleOverviewProps {
     activeDoctorsOnDuty: number;
     totalDoctors: number;
     appointmentsToday: number;
-    urgentAiAlerts: number;
+    urgentTriageAlerts: number;
   };
   activityFeed: ActivityEvent[];
   doctors: DoctorStaff[];
@@ -1245,7 +1244,7 @@ function ModuleOverview({
     return ev.type === activityFilter;
   });
 
-  const criticalPatients = patients.filter(p => p.aiRiskLevel === 'critical');
+  const criticalPatients = patients.filter(p => p.triageStatus === 'critical');
 
   return (
     <div className="space-y-6">
@@ -1262,7 +1261,7 @@ function ModuleOverview({
             {facility.name} — Administrative Command Center
           </h2>
           <p className="text-xs text-slate-400 mt-1 max-w-2xl">
-            Real-time facility oversight, on-duty clinical rosters, central appointment management, and automated AI health risk monitoring.
+            Real-time facility oversight, on-duty clinical rosters, central appointment management, and automated clinical triage monitoring.
           </p>
         </div>
 
@@ -1363,22 +1362,22 @@ function ModuleOverview({
           </div>
         </div>
 
-        {/* Card 4: Urgent AI Alerts */}
+        {/* Card 4: Urgent Triage Alerts */}
         <div
           onClick={() => onNavigate('patients')}
           className={cn(
             'p-5 rounded-2xl border transition-all cursor-pointer group shadow-sm',
-            metrics.urgentAiAlerts > 0
+            metrics.urgentTriageAlerts > 0
               ? 'bg-rose-950/20 border-rose-500/40 hover:border-rose-500'
               : 'bg-slate-900/80 border-slate-800 hover:border-slate-700'
           )}
         >
           <div className="flex items-center justify-between text-xs text-slate-400 mb-2">
-            <span className="font-semibold uppercase tracking-wider text-[11px]">Urgent AI Alerts</span>
+            <span className="font-semibold uppercase tracking-wider text-[11px]">Urgent Triage Alerts</span>
             <div
               className={cn(
                 'w-8 h-8 rounded-lg flex items-center justify-center transition-transform group-hover:scale-110',
-                metrics.urgentAiAlerts > 0 ? 'bg-rose-500/20 text-rose-400 animate-pulse' : 'bg-slate-800 text-slate-400'
+                metrics.urgentTriageAlerts > 0 ? 'bg-rose-500/20 text-rose-400 animate-pulse' : 'bg-slate-800 text-slate-400'
               )}
             >
               <AlertTriangle className="w-4 h-4" />
@@ -1388,16 +1387,16 @@ function ModuleOverview({
             <span
               className={cn(
                 'text-3xl font-extrabold tracking-tight',
-                metrics.urgentAiAlerts > 0 ? 'text-rose-400' : 'text-slate-300'
+                metrics.urgentTriageAlerts > 0 ? 'text-rose-400' : 'text-slate-300'
               )}
             >
-              {metrics.urgentAiAlerts}
+              {metrics.urgentTriageAlerts}
             </span>
             <span className="text-xs text-slate-500">critical flags</span>
           </div>
           <div className="mt-3 flex items-center justify-between text-xs border-t border-slate-800/80 pt-2.5">
-            <span className={metrics.urgentAiAlerts > 0 ? 'text-rose-400 font-semibold' : 'text-slate-400'}>
-              {metrics.urgentAiAlerts > 0 ? 'Critical vitals detected' : 'All vitals within range'}
+            <span className={metrics.urgentTriageAlerts > 0 ? 'text-rose-400 font-semibold' : 'text-slate-400'}>
+              {metrics.urgentTriageAlerts > 0 ? 'Critical vitals detected' : 'All vitals within range'}
             </span>
             <span className="text-slate-500 group-hover:text-slate-300">Triage &rarr;</span>
           </div>
@@ -1516,14 +1515,14 @@ function ModuleOverview({
           </div>
         </div>
 
-        {/* Right Column (1 Col): AI Health Risk Flags & On-Duty Staff */}
+        {/* Right Column (1 Col): Clinical Triage Flags & On-Duty Staff */}
         <div className="space-y-6">
-          {/* AI Health Risk Watchlist */}
+          {/* Clinical Triage Watchlist */}
           <div className="p-6 rounded-2xl bg-slate-900/80 border border-slate-800">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-sm font-bold text-white flex items-center gap-2">
                 <AlertTriangle className="w-4 h-4 text-rose-400" />
-                AI Health Risk Watchlist
+                Clinical Triage Watchlist
               </h3>
               <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-rose-500/20 text-rose-300 font-bold">
                 {criticalPatients.length} High Risk
@@ -1535,7 +1534,7 @@ function ModuleOverview({
                 <ShieldCheck className="w-7 h-7 text-emerald-400 mx-auto mb-2" />
                 <p className="text-xs font-semibold text-slate-300">No Critical Risk Alerts</p>
                 <p className="text-[11px] text-slate-500 mt-0.5">
-                  Patient vitals are continuously scanned by MedConnect AI. Abnormal values will be escalated here.
+                  Patient vitals are continuously monitored. Abnormal values will be escalated here for priority triage.
                 </p>
               </div>
             ) : (
@@ -1552,7 +1551,7 @@ function ModuleOverview({
                       </span>
                     </div>
                     <p className="text-[11px] text-slate-300">
-                      {p.aiRiskReason || 'Critical blood pressure / SpO2 anomaly detected.'}
+                      {p.triageNotes || 'Critical blood pressure / SpO2 anomaly detected.'}
                     </p>
                     <button
                       onClick={() => onViewPatientRecord(p)}
@@ -1929,7 +1928,7 @@ function ModulePatientsClients({
       p.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
       p.pid.toLowerCase().includes(searchTerm.toLowerCase()) ||
       p.email.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesRisk = riskFilter === 'all' || p.aiRiskLevel === riskFilter;
+    const matchesRisk = riskFilter === 'all' || p.triageStatus === riskFilter;
     return matchesSearch && matchesRisk;
   });
 
@@ -1950,7 +1949,7 @@ function ModulePatientsClients({
       lastVisit: 'Today',
       department: newPatientDept,
       assignedDoctor: doctors[0]?.name || 'Unassigned',
-      aiRiskLevel: 'normal',
+      triageStatus: 'normal',
       historicalVitals: [
         {
           recordedAt: new Date().toISOString().split('T')[0],
@@ -1982,7 +1981,7 @@ function ModulePatientsClients({
             Institutional Patient Directory & Clinical Records
           </h2>
           <p className="text-xs text-slate-400 mt-0.5">
-            Centralized institutional access to patient dossiers, historical vitals logs, and automated AI health risk flags.
+            Centralized institutional access to patient dossiers, historical vitals logs, and clinical triage flags.
           </p>
         </div>
 
@@ -2022,7 +2021,7 @@ function ModulePatientsClients({
                   : 'text-slate-400 hover:text-white'
               )}
             >
-              {rf === 'critical' ? 'AI Critical Flags' : rf}
+              {rf === 'critical' ? 'Critical Triage Flags' : rf}
             </button>
           ))}
         </div>
@@ -2036,7 +2035,7 @@ function ModulePatientsClients({
           <p className="text-xs text-slate-400 mt-1 max-w-sm mx-auto">
             {searchTerm || riskFilter !== 'all'
               ? 'No patients match your search criteria.'
-              : 'Your hospital patient directory is a clean slate. Enroll your first patient to access comprehensive medical records and AI alerts.'}
+              : 'Your hospital patient directory is a clean slate. Enroll your first patient to access comprehensive medical records and triage alerts.'}
           </p>
           <button
             onClick={() => setIsAddPatientOpen(true)}
@@ -2055,7 +2054,7 @@ function ModulePatientsClients({
                   <th className="py-3.5 px-4">Demographics</th>
                   <th className="py-3.5 px-4">Contact</th>
                   <th className="py-3.5 px-4">Department / Doctor</th>
-                  <th className="py-3.5 px-4">AI Health Risk Flag</th>
+                  <th className="py-3.5 px-4">Clinical Triage Status</th>
                   <th className="py-3.5 px-4">Last Visit</th>
                   <th className="py-3.5 px-4 text-right">Actions</th>
                 </tr>
@@ -2085,9 +2084,9 @@ function ModulePatientsClients({
                       <span
                         className={cn(
                           'px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider inline-flex items-center gap-1.5',
-                          p.aiRiskLevel === 'critical'
+                          p.triageStatus === 'critical'
                             ? 'bg-rose-500/20 text-rose-300 border border-rose-500/40 animate-pulse'
-                            : p.aiRiskLevel === 'moderate'
+                            : p.triageStatus === 'moderate'
                             ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
                             : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
                         )}
@@ -2095,10 +2094,10 @@ function ModulePatientsClients({
                         <span
                           className={cn(
                             'w-1.5 h-1.5 rounded-full',
-                            p.aiRiskLevel === 'critical' ? 'bg-rose-400' : p.aiRiskLevel === 'moderate' ? 'bg-amber-400' : 'bg-emerald-400'
+                            p.triageStatus === 'critical' ? 'bg-rose-400' : p.triageStatus === 'moderate' ? 'bg-amber-400' : 'bg-emerald-400'
                           )}
                         />
-                        {p.aiRiskLevel === 'critical' ? 'Critical Alert' : p.aiRiskLevel === 'moderate' ? 'Moderate Risk' : 'Normal'}
+                        {p.triageStatus === 'critical' ? 'Critical Alert' : p.triageStatus === 'moderate' ? 'Moderate Risk' : 'Normal'}
                       </span>
                     </td>
                     <td className="py-3.5 px-4 text-slate-400 font-mono text-[11px]">{p.lastVisit}</td>
@@ -2729,7 +2728,7 @@ function ModuleCommunicationOutreach({
           <div className="space-y-6">
             <div className="p-6 rounded-2xl bg-slate-900/80 border border-slate-800 space-y-3">
               <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                <Sparkles className="w-4 h-4 text-amber-400" />
+                <FileText className="w-4 h-4 text-amber-400" />
                 Pre-Approved Template Library
               </h3>
               <p className="text-xs text-slate-400">
@@ -3161,8 +3160,8 @@ function ModuleAnalyticsReports({
   };
 
   const exportPatients = () => {
-    const headers = ['PID', 'Name', 'Age', 'Gender', 'BloodGroup', 'Phone', 'Email', 'RiskLevel'];
-    const data = patients.map(p => [p.pid, `"${p.name}"`, String(p.age), p.gender, p.bloodGroup, p.phone, p.email, p.aiRiskLevel]);
+    const headers = ['PID', 'Name', 'Age', 'Gender', 'BloodGroup', 'Phone', 'Email', 'TriageStatus'];
+    const data = patients.map(p => [p.pid, `"${p.name}"`, String(p.age), p.gender, p.bloodGroup, p.phone, p.email, p.triageStatus]);
     handleExportCSV('medconnect_patients_registry', [headers, ...data]);
   };
 
@@ -3551,7 +3550,7 @@ function ModuleHospitalSettings({ facility, signOut }: ModuleHospitalSettingsPro
         <div className="space-y-3">
           <div className="p-3.5 rounded-xl bg-slate-950 border border-slate-800 flex items-center justify-between">
             <div>
-              <p className="text-xs font-bold text-white">Automated AI Health Risk Alerts</p>
+              <p className="text-xs font-bold text-white">Automated Clinical Triage Alerts</p>
               <p className="text-[11px] text-slate-400">Escalate critical vitals immediately to on-duty physicians.</p>
             </div>
             <span className="text-xs font-bold text-emerald-400">Enabled</span>
@@ -3805,32 +3804,32 @@ function MedicalRecordModal({ patient, onClose, onAlertDoctor }: MedicalRecordMo
             <span
               className={cn(
                 'font-bold uppercase text-[10px]',
-                patient.aiRiskLevel === 'critical' ? 'text-rose-400' : 'text-emerald-400'
+                patient.triageStatus === 'critical' ? 'text-rose-400' : 'text-emerald-400'
               )}
             >
-              {patient.aiRiskLevel}
+              {patient.triageStatus}
             </span>
           </div>
         </div>
 
-        {/* AI Health Risk Triage Assessment */}
+        {/* Clinical Triage Protocol Assessment */}
         <div
           className={cn(
             'p-4 rounded-xl border space-y-1.5',
-            patient.aiRiskLevel === 'critical'
+            patient.triageStatus === 'critical'
               ? 'bg-rose-950/20 border-rose-500/40'
               : 'bg-slate-950 border-slate-800'
           )}
         >
           <div className="flex items-center justify-between">
             <h4 className="text-xs font-bold text-white flex items-center gap-1.5">
-              <AlertTriangle className={patient.aiRiskLevel === 'critical' ? 'text-rose-400 w-4 h-4' : 'text-teal-400 w-4 h-4'} />
-              AI Automated Clinical Risk Assessment
+              <AlertTriangle className={patient.triageStatus === 'critical' ? 'text-rose-400 w-4 h-4' : 'text-teal-400 w-4 h-4'} />
+              Clinical Triage & Biometric Assessment
             </h4>
-            <span className="text-[10px] font-mono text-slate-400">MedConnect AI Engine</span>
+            <span className="text-[10px] font-mono text-slate-400">Clinical Triage Protocol</span>
           </div>
           <p className="text-xs text-slate-300">
-            {patient.aiRiskReason || 'All historical biomarkers, systolic/diastolic ratios, and pulse readings are clinically stable.'}
+            {patient.triageNotes || 'All historical biomarkers, systolic/diastolic ratios, and pulse readings are clinically stable.'}
           </p>
         </div>
 
