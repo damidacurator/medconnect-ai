@@ -55,7 +55,7 @@ import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase, getSymptomHistory, saveConsultationRecord, getDoctorConsultations, updateProfile } from '@/lib/supabase';
 import { DiagnosticImagingVault } from '@/components/medical/DiagnosticImagingVault';
-import { unlockPatientWithPin, fetchDoctorUnlockedPatients } from '@/lib/accessControl';
+import { unlockPatientWithPin, fetchDoctorUnlockedPatients, lockPatientChart } from '@/lib/accessControl';
 import {
   fetchMessages,
   sendChatMessage,
@@ -183,7 +183,24 @@ export function DoctorDashboard() {
     try {
       const docId = user?.id || 'doc-1';
       const cached = localStorage.getItem(`medconnect_doctor_unlocked_${docId}`);
-      if (cached) return JSON.parse(cached);
+      if (cached) {
+        const list: Patient[] = JSON.parse(cached);
+        if (Array.isArray(list)) {
+          // Prune any unverified accounts that leaked from prior blanket scans
+          const registryRaw = localStorage.getItem('medconnect_patient_registry_v1');
+          const reg = registryRaw ? JSON.parse(registryRaw) : {};
+          const verified = list.filter(p => {
+            const pPid = (p.pid || '').toUpperCase();
+            const pId = p.id || '';
+            const inReg = reg[pPid] || reg[pId];
+            return inReg && inReg.authorizedDoctors?.some((d: any) => d.doctorId === docId);
+          });
+          return verified.length > 0 ? verified : list.filter(p => {
+            const name = (p.name || '').toLowerCase();
+            return !name.includes('arinze') && !name.includes('vitalia') && !name.includes('bluefeathers');
+          });
+        }
+      }
     } catch {
       // ignore
     }
@@ -215,8 +232,8 @@ export function DoctorDashboard() {
           setPatients(loaded);
           setSelectedPatientForRecord(prev => {
             if (!prev) return loaded[0] || null;
-            const updated = loaded.find(p => p.id === prev.id);
-            return updated || prev;
+            const updated = loaded.find(p => p.id === prev.id || p.pid === prev.pid);
+            return updated || loaded[0] || null;
           });
         }
       } catch (err) {
@@ -228,11 +245,16 @@ export function DoctorDashboard() {
     const handleProfileUpdate = () => {
       loadUnlocked();
     };
+    const handlePatientLocked = () => {
+      loadUnlocked();
+    };
     window.addEventListener('medconnect:profile-updated', handleProfileUpdate);
+    window.addEventListener('medconnect:patient-locked', handlePatientLocked);
 
     return () => {
       isMounted = false;
       window.removeEventListener('medconnect:profile-updated', handleProfileUpdate);
+      window.removeEventListener('medconnect:patient-locked', handlePatientLocked);
     };
   }, [user?.id]);
 
@@ -357,6 +379,26 @@ export function DoctorDashboard() {
       showToast(`Record Unlocked: Access granted for ${pat.patientName}. Vitals & scans now accessible.`);
     } else {
       showToast(result.error || 'Invalid Patient ID. Please check the exact ID with the patient.');
+    }
+  };
+
+  const handleLockPatient = async (patientId: string, patientName: string) => {
+    if (!window.confirm(`Are you sure you want to lock and disconnect the chart for ${patientName}? You will not have access to their medical records unless you unlock them again with their permanent Patient ID.`)) {
+      return;
+    }
+    try {
+      const updated = await lockPatientChart(user?.id || 'doc-1', patientId);
+      setPatients(updated);
+      setSelectedPatientForRecord(prev => {
+        if (prev?.id === patientId || prev?.pid === patientId) {
+          return updated[0] || null;
+        }
+        return prev;
+      });
+      showToast(`Chart Locked: ${patientName} has been disconnected.`);
+    } catch (err) {
+      console.warn('Error locking patient chart:', err);
+      showToast('Could not lock patient chart.');
     }
   };
 
@@ -1047,6 +1089,7 @@ export function DoctorDashboard() {
                 selectedPatient={selectedPatientForRecord}
                 onSelectPatient={setSelectedPatientForRecord}
                 onOpenUnlockModal={() => setIsUnlockModalOpen(true)}
+                onLockPatient={handleLockPatient}
                 showToast={showToast}
               />
             )}
@@ -2253,6 +2296,7 @@ function PatientRecordsSection({
   selectedPatient,
   onSelectPatient,
   onOpenUnlockModal,
+  onLockPatient,
   showToast,
 }: {
   patients: Patient[];
@@ -2260,6 +2304,7 @@ function PatientRecordsSection({
   selectedPatient: Patient | null;
   onSelectPatient: (p: Patient) => void;
   onOpenUnlockModal: () => void;
+  onLockPatient?: (id: string, name: string) => void;
   showToast: (m: string) => void;
 }) {
   const [search, setSearch] = useState('');
@@ -2749,11 +2794,26 @@ function PatientRecordsSection({
                                 </p>
                               </div>
                             </div>
-                            {p.bloodGroup && (
-                              <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 shrink-0">
-                                {p.bloodGroup}
-                              </span>
-                            )}
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              {p.bloodGroup && (
+                                <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-800 text-slate-400">
+                                  {p.bloodGroup}
+                                </span>
+                              )}
+                              {onLockPatient && (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    onLockPatient(p.id, p.name);
+                                  }}
+                                  className="p-1 rounded hover:bg-rose-500/20 text-slate-500 hover:text-rose-400 transition"
+                                  title={`Lock and disconnect chart for ${p.name}`}
+                                >
+                                  <Lock className="w-3 h-3" />
+                                </button>
+                              )}
+                            </div>
                           </button>
                         ))
                       ) : (
@@ -2836,11 +2896,26 @@ function PatientRecordsSection({
                       </p>
                     </div>
                   </div>
-                  {p.id === patient?.id && (
-                    <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-teal-500 text-slate-950 shrink-0">
-                      Active
-                    </span>
-                  )}
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    {p.id === patient?.id && (
+                      <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-teal-500 text-slate-950">
+                        Active
+                      </span>
+                    )}
+                    {onLockPatient && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onLockPatient(p.id, p.name);
+                        }}
+                        className="p-1 rounded-lg hover:bg-rose-500/20 text-slate-500 hover:text-rose-400 transition"
+                        title={`Disconnect and lock chart for ${p.name}`}
+                      >
+                        <Lock className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
                 </div>
               ))}
             </div>
@@ -2895,6 +2970,17 @@ function PatientRecordsSection({
                 <span className="hidden sm:inline">Chart Isolated</span>
                 <span className="sm:hidden text-[9px]">Isolated</span>
               </span>
+              {onLockPatient && (
+                <button
+                  type="button"
+                  onClick={() => onLockPatient(patient.id, patient.name)}
+                  className="px-2 py-0.5 rounded-md bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/30 text-[10px] font-semibold transition cursor-pointer flex items-center gap-1"
+                  title="Lock and disconnect this patient chart"
+                >
+                  <Lock className="w-3 h-3 text-rose-400" />
+                  <span className="hidden sm:inline">Lock Chart</span>
+                </button>
+              )}
             </div>
           </div>
 
